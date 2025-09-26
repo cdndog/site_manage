@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Google Crawler Server Status</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+  }
+  table {
+    border-collapse: collapse;
+    width: 80%;
+    margin: 0 auto;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  }
+  th, td {
+    border: 1px solid #ddd;
+    padding: 12px 15px;
+    text-align: center;
+    cursor: default;
+  }
+  th {
+    background-color: #007BFF;
+    color: white;
+  }
+  tr:nth-child(even) {
+    background-color: #f9f9f9;
+  }
+  tr:hover {
+    background-color: #f1f1f1;
+  }
+  td.ip-cell {
+    color: #0066CC;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  tr.info-row td {
+    background-color: #e9f7ff;
+    text-align: left;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<h2 style="text-align:center;">采集服务器状态检查</h2>
+<p style="text-align:center;">数据更新时间：<span id="lastUpdated">Never</span></p>
+<table id="statusTable">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>服务器状态</th>
+      <th>程序状态</th>
+      <th>上次运行时间</th>
+      <th>服务器IP</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+  async function loadServerStatus() {
+    try {
+      const response = await fetch('server_status.json');
+      const data = await response.json();
+      
+      const tbody = document.querySelector('#statusTable tbody');
+      tbody.innerHTML = '';
+      let id = 1;
+      data.forEach(item => {
+        const dateStr = item.check_date;
+        const programStatus = item.server_status;
+        const formattedDate = dateStr.slice(0,4) + '-' + dateStr.slice(4,6) + '-' + dateStr.slice(6,8) + ' ' + 
+                              dateStr.slice(8,10) + ':' + dateStr.slice(10,12) + ':' + dateStr.slice(12,14);
+        let workStatus;
+        if ( programStatus === "Google OK") {
+          workStatus = "✅（程序正常）";
+        } else if (programStatus === "Google Sorry") {
+          workStatus = "❌（程序异常）";
+        } else {
+          workStatus = "⚠️（未知错误）";
+        }
+        // Parse to Date object
+        const checkDate = new Date(formattedDate.replace(' ', 'T'));
+
+        const now = new Date();
+        const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+        const eightHoursAgo = new Date(now.getTime() - 8 * 60 * 60 * 1000);
+
+
+
+        let color;
+        let serverStatus;
+        let statusIcon;
+        if (checkDate < eightHoursAgo) {
+          color = 'red';
+          statusIcon = '❌';
+          serverStatus = '运行超时，请登陆检查';
+        } else if (checkDate < twoHoursAgo) {
+          color = 'yellow';
+          statusIcon = '⚠️';
+          serverStatus = ' 运行报警，请登陆检查';
+        } else {
+          color = 'green';
+          statusIcon = '✅';
+          serverStatus = '运行正常';
+        }
+        
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td ">${id++}</td>
+          <td style="color: ${color}">${statusIcon} ${serverStatus}</td>
+          <td >${workStatus}</td>
+          <td style="color: ${color}">${formattedDate}</td>
+          <td class="ip-cell">${item.server_ip}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      // Event delegation for IP click with row info append
+      
+      tbody.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('ip-cell')) {
+          const ip = e.target.textContent;
+          const clickedRow = e.target.parentElement;
+          // If info row already exists just toggle its visibility
+          let next = clickedRow.nextElementSibling;
+          if (next && next.classList.contains('info-row')) {
+            next.remove();
+            return;
+          }
+          // Remove any existing info-rows
+          document.querySelectorAll('.info-row').forEach(row => row.remove());
+
+          try {
+            const ipInfoResponse = await fetch(`get_ip_info.php?ip=${ip}`);
+            const ipInfo = await ipInfoResponse.json();
+            let infoText;
+            if (ipInfo.status === 'success') {
+              infoText = `
+                Country: ${ipInfo.country} <br>
+                Region: ${ipInfo.regionName} <br>
+                City: ${ipInfo.city} <br>
+                ISP: ${ipInfo.isp}
+              `;
+            } else {
+              infoText = `Failed to get info for IP: ${ip}`;
+            }
+            // Create and insert new row after clicked row
+            const infoRow = document.createElement('tr');
+            infoRow.classList.add('info-row');
+            const infoCell = document.createElement('td');
+            infoCell.colSpan = 3;
+            infoCell.innerHTML = infoText;
+            infoRow.appendChild(infoCell);
+            clickedRow.parentNode.insertBefore(infoRow, clickedRow.nextSibling);
+          } catch (err) {
+            console.error('Error fetching IP info: ' + err.message);
+          }
+        }
+      });
+
+      // Update last fetch timestamp
+      const now = new Date();
+      const formattedTime = now.toLocaleString(undefined, { timeZoneName: 'long' }); // e.g. "8/27/2025, 10:25:30 AM"
+      document.getElementById('lastUpdated').textContent = formattedTime;
+
+    } catch (err) {
+      console.error('Failed to load or parse JSON:', err);
+    }
+  }
+
+  loadServerStatus();
+  setInterval(loadServerStatus, 300000); // refresh data every 5 minutes 300000 ms = 5 minutes
+</script>
+
+</body>
+</html>

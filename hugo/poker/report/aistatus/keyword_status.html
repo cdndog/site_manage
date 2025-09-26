@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>AIGC文章生成报表</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+  }
+  table {
+    border-collapse: collapse;
+    width: 80%;
+    margin: 0 auto;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  }
+  th, td {
+    border: 1px solid #ddd;
+    padding: 12px 15px;
+    text-align: center;
+    cursor: default;
+  }
+  th {
+    background-color: #007BFF;
+    color: white;
+  }
+  tr:nth-child(even) {
+    background-color: #f9f9f9;
+  }
+  tr:hover {
+    background-color: #f1f1f1;
+  }
+  td.ip-cell {
+    color: #0066CC;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  tr.info-row td {
+    background-color: #e9f7ff;
+    text-align: left;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+<h2 style="text-align:center;">关键词采集状态检查</h2>
+<p style="text-align:center;">数据更新时间：<span id="lastUpdated">Never</span></p>
+<table id="statusTable">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>事务ID</th>
+      <th>关键词</th>
+      <th>语言</th>
+      <th>发布GIT</th>
+      <th>采集时间</th>
+      <th>发布时间</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+async function loadServerStatus() {
+  try {
+    const response = await fetch('seodata/aigc_status.json');
+    const data = await response.json();
+
+    const tbody = document.querySelector('#statusTable tbody');
+    tbody.innerHTML = '';
+    let id = 1;
+
+    const now = new Date();
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    data.forEach(item => {
+     
+      
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${id++}</td>
+          <td>${item.ctx_id || ""}</td>
+          <td>${item.keyword || ""}</td>
+          <td>${item.lang || ""}</td>
+          <td>${item.pubdomain || ""}</td>
+          <td>${item.createAt || ""}</td>
+          <td>${item.publishAt || ""}</td>
+        `;
+        tbody.appendChild(tr);
+     
+    });
+
+    // Event delegation for IP click with row info append
+    tbody.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('ip-cell')) {
+        const ip = e.target.textContent;
+        const clickedRow = e.target.parentElement;
+
+        let next = clickedRow.nextElementSibling;
+        if (next && next.classList.contains('info-row')) {
+          next.remove();
+          return;
+        }
+
+        document.querySelectorAll('.info-row').forEach(row => row.remove());
+
+        try {
+          const ipInfoResponse = await fetch(`get_ip_info.php?ip=${ip}`);
+          const ipInfo = await ipInfoResponse.json();
+          let infoText;
+          if (ipInfo.status === 'success') {
+            infoText = `
+              Country: ${ipInfo.country} <br>
+              Region: ${ipInfo.regionName} <br>
+              City: ${ipInfo.city} <br>
+              ISP: ${ipInfo.isp}
+            `;
+          } else {
+            infoText = `Failed to get info for IP: ${ip}`;
+          }
+          const infoRow = document.createElement('tr');
+          infoRow.classList.add('info-row');
+          const infoCell = document.createElement('td');
+          infoCell.colSpan = 6;
+          infoCell.innerHTML = infoText;
+          infoRow.appendChild(infoCell);
+          clickedRow.parentNode.insertBefore(infoRow, clickedRow.nextSibling);
+        } catch (err) {
+          console.error('Error fetching IP info: ' + err.message);
+        }
+      }
+    });
+
+    const formattedTime = now.toLocaleString(undefined, { timeZoneName: 'long' });
+    document.getElementById('lastUpdated').textContent = formattedTime;
+
+  } catch (err) {
+    console.error('Failed to load or parse JSON:', err);
+  }
+}
+
+loadServerStatus();
+setInterval(loadServerStatus, 300000);
+
+</script>
+
+</body>
+</html>
