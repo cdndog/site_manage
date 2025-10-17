@@ -1,4 +1,7 @@
 <?php
+
+ini_set('memory_limit', '256M');
+
 if (!file_exists('global_config.php')) {
     die('file global_config.php not found.');
 }
