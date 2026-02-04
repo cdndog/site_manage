@@ -41,18 +41,38 @@ function renewDBtable($db_name, $table_name, $sitedatas, $query_column, $renew_c
 
         // $git_name = $site['git_name'];
 
-        $statement = $db->prepare('SELECT * FROM "'.$table_name.'" WHERE "'.$query_column.'" = :query_value');
-        $statement->bindValue(':query_value', $site[$query_column]);
+        // $statement = $db->prepare('SELECT * FROM "'.$table_name.'" WHERE "'.$query_column.'" = :query_value');
+        // $statement->bindValue(':query_value', $site[$query_column]);
+        // $result = $statement->execute()->fetchArray(SQLITE3_ASSOC);
+
+        // Handle single or multiple query columns (e.g., "ctx_id" or "key1,key2")
+        $query_cols = array_map('trim', explode(',', $query_column));
+        $where_conditions = [];
+        $param_placeholders = [];
+
+        foreach ($query_cols as $col) {
+            $where_conditions[] = '"' . $col . '" = :' . $col;
+            $param_placeholders[] = ':' . $col;
+        }
+
+        $where_clause = implode(' AND ', $where_conditions);
+        $select_sql = 'SELECT * FROM "' . $table_name . '" WHERE ' . $where_clause;
+
+        $statement = $db->prepare($select_sql);
+        foreach ($query_cols as $col) {
+            $statement->bindValue(':' . $col, $site[$col]);
+        }
         $result = $statement->execute()->fetchArray(SQLITE3_ASSOC);
 
-        if (isset($result[$query_column])) {
+        if (isset($result[$query_cols[0]])) {
+            // if (isset($result[$query_column]))  {
             // echo "{$site[$query_column]} exist {$result['ctx_id']}, updating".PHP_EOL;
             $SQL = 'UPDATE "'.$table_name.'" SET ';
             foreach ($renew_columns as $column) {
                 $SQL .= '"'.$column.'" = :'.$column.', ';
             }
             $SQL = rtrim($SQL, ', ');
-            $SQL .= ' WHERE "'.$query_column.'" = :'.$query_column;
+            $SQL .= ' WHERE '. $where_clause;
             // echo $SQL;
             // $SQL = 'UPDATE "'.$table_name.'" SET "git_name" = :git_name, "domain" = :domain, "site_title" = :site_title, "site_subtitle" = :site_subtitle, "site_logo" = :site_logo, "languages" = :languages, "sns_id" = :sns_id, "topnav_menus" = :topnav_menus, "keyword" = :keyword, "theme_name" = :theme_name, "theme_type" = :theme_type, "sitedir" = :sitedir, "status" = :status, "json" = :json, "time" = :time WHERE "ctx_id" = :ctx_id';
             
@@ -579,8 +599,11 @@ if ($topic_data) { ?>
 
         if ( $content_array['bulkkeyword'] == "enable" ) {
             $keywords = explode(',', $content_array['keyword']);
+            // var_dump($sitedatas);
+            $query_column = "keyword,git_name";
         } else {
             $keywords = [trim($content_array['keyword'])];
+            $query_column = "ctx_id";
         }
 
         foreach ($keywords as $key => $keyword) {
@@ -593,15 +616,27 @@ if ($topic_data) { ?>
             if(isset($temp_post['post_uuid'])) {
                 unset($temp_post['post_uuid']);
             }
+
+            if ( $content_array['bulkkeyword'] == "enable" ) {
+                $content_array['ctx_id'] = str_replace('.','',uniqid(time(), true));
+            } else {
+                $content_array['ctx_id'] = $ctx_id;
+            }
+            
             $content_array['json'] = json_encode($temp_post);
             $content_array['keyword'] = trim($keyword);
-
             $sitedatas[] = $content_array;
         }
 
         // var_dump($sitedatas);
+        // $query_column = "keyword,git_name";
 
-        renewDBtable($db_name, $table_name, $sitedatas, $query_column, $renew_columns);
+        try {
+            renewDBtable($db_name, $table_name, $sitedatas, $query_column, $renew_columns);  
+            // ✅ Processes ALL keywords at once
+        } catch (Exception $e) {
+            error_log('Bulk update failed: ' . $e->getMessage());
+        }
 
         queryDB2text($db_name, $table_name, $output_name, $keyword_columns);
 
