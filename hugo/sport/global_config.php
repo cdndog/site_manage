@@ -63,6 +63,7 @@ return [
     'statuses' => [
         'enable' => 'enable',
         'disable' => 'disable',
+        'aidone' => 'aidone',
         'draft' => 'draft'
     ],
     'series' => [

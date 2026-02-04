@@ -86,6 +86,7 @@ return [
         'enable' => 'enable',
         'disable' => 'disable',
         'draft' => 'draft',
+        'aidone' => 'aidone',
         'delete' => 'delete'
     ],
     'series' => [

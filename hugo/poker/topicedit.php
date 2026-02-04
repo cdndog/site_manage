@@ -599,8 +599,11 @@ if ($topic_data) { ?>
 
         if ( $content_array['bulkkeyword'] == "enable" ) {
             $keywords = explode(',', $content_array['keyword']);
+            // var_dump($sitedatas);
+            $query_column = "keyword,git_name";
         } else {
             $keywords = [trim($content_array['keyword'])];
+            $query_column = "ctx_id";
         }
 
         foreach ($keywords as $key => $keyword) {
@@ -616,14 +619,17 @@ if ($topic_data) { ?>
 
             if ( $content_array['bulkkeyword'] == "enable" ) {
                 $content_array['ctx_id'] = str_replace('.','',uniqid(time(), true));
+            } else {
+                $content_array['ctx_id'] = $ctx_id;
             }
+            
             $content_array['json'] = json_encode($temp_post);
             $content_array['keyword'] = trim($keyword);
             $sitedatas[] = $content_array;
         }
 
         // var_dump($sitedatas);
-        $query_column = "keyword,git_name";
+        // $query_column = "keyword,git_name";
 
         try {
             renewDBtable($db_name, $table_name, $sitedatas, $query_column, $renew_columns);  
