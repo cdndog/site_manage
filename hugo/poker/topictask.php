@@ -61,8 +61,8 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
                 $parts = explode('|', $line);
                 $jsondata = array_pop($parts);
                 $alldata = json_decode($jsondata, true);
-                if ( !empty($parts[0]) && $alldata['status'] === "enable" ) {
                 // if ( $alldata['lasttask'] !== $time && !empty($parts[0]) && $alldata['status'] === "enable" ) {
+                if ( !empty($parts[0]) && $alldata['status'] === "enable" ) {
                     $output[] = implode('|', $parts).'|'.json_encode($alldata);
                     $alldata['lasttask'] = $time;
                     // echo json_encode($alldata).PHP_EOL;
@@ -201,7 +201,7 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
 
                 if (!empty($keyword)) {
                     // $url = 'http://43.153.41.108/hugo/keywordops.php';
-                    $url = $remoteServerURL.'/hugo/topicops.php';
+                    $url = $remoteServerURL.'/hugo/topicedit.php';
                     $data = [
                         'post_uuid' => $post_uuid,
                         'post_keyword' => $keyword,

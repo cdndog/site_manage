@@ -566,10 +566,10 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
         $post_sns_id = "";
         $post_topnavmenus = "";
         $post_keyword = "";
-        $post_themetype = "";
-        $post_sitetype = "";
+        $post_themetype = "poker";
+        $post_sitetype = "cta";
         $post_sitedir = "";
-        $post_sitedeploy = "linux";
+        $post_sitedeploy = "cloudflare";
         $post_sitehostip = "";
         $local_deploy = "";
         $local_hostip = "";
@@ -601,8 +601,26 @@ if (  1 == 1  ) { ?>
         <label for="post_description">站点描述:</label>
         <input type="text" class="form-control form-control-sm" id="post_description" name="post_description" value="<?php echo htmlspecialchars_decode(strip_tags($post_description)); ?>" required placeholder="字数控制在200字内，不包含（｜）">
 
-        <label for="post_sitelogo">站点图标:</label>
-        <input type="text" class="form-control form-control-sm" id="post_sitelogo" name="post_sitelogo" value="<?php echo $post_sitelogo; ?>" placeholder="文章的封面图片网址，只支持外部图床链接，不包含（｜）">
+        <label for="post_sitelogo" class=""><i class="fas fa-image icon me-1"></i>参考图片<b class="text-muted ms-1">支持直接粘贴</b></label>
+        <span id="previewImageTrigger" class="ms-2 badge bg-info" style="cursor: pointer;">预览图片</span>
+        <div class="input-group mb-3">
+          <input 
+            type="text" 
+            class="form-control form-control-sm" 
+            id="post_sitelogo" 
+            name="post_sitelogo" 
+            placeholder="文章的封面图片网址，只支持外部图床链接，不包含（｜）" 
+            aria-label="图片链接" 
+            value="<?php echo $post_sitelogo; ?>"
+          >
+          <div class="input-group-append">
+            <!-- Hidden file input -->
+            <input type="file" id="imageFileInput" accept="image/*" style="display: none;" />
+            <button class="btn btn-sm btn-primary" type="button" id="imagesource">
+              <i class="fas fa-upload me-1"></i>上传
+            </button>
+          </div>
+        </div>
 
         <hr>
         <div class="row">
@@ -916,6 +934,7 @@ if (  1 == 1  ) { ?>
 
             <label for="post_sitelogo">站点图标:</label>
             <input type="text" class="form-control form-control-sm" id="post_sitelogo" name="post_sitelogo" value="<?php echo $content_array['site_logo']; ?>" readonly>
+
             <div class="row">
                 <div class="col-md-4 col-xs-12">
                 <label for="post_sitedeploy">部署模式:</label>
@@ -975,6 +994,9 @@ if (  1 == 1  ) { ?>
             <input type="text" class="form-control form-control-sm" id="title" name="title" value="<?php echo $content_array['setupNum']; ?>" readonly style="display: none;">
         </div>
         <hr>
+        <div>
+            <a class="btn btn-sm btn-primary" href="./topicedit.php">录入网站文章标题</a>
+        </div>
 
         <?php
 
@@ -1000,8 +1022,9 @@ if (  1 == 1  ) { ?>
 
         $renew_columns = ['ctx_id', 'git_name', 'git_account', 'domain', 'site_title', 'site_subtitle', 'site_logo', 'languages', 'sns_id', 'topnav_menus', 'keyword', 'theme_name', 'theme_type', 'sitedir', 'deploy', 'hostip', 'local_deploy', 'local_hostip', 'status', 'json', 'time'];
         $content_array['json'] = $_POST['post_json'];
-
-        $sitedatas[] = $content_array;
+        if ( !empty($content_array['domain']) ) {
+            $sitedatas[] = $content_array;
+        }
 
         // var_dump($sitedatas);
 
@@ -1018,7 +1041,7 @@ if (  1 == 1  ) { ?>
         // $result = $statement->execute()->fetchArray(SQLITE3_ASSOC);
         // $db->close();
         // var_dump($result);
-
+        
         renewDBtable($db_name, $table_name, $sitedatas, $query_column, $renew_columns);
 
         queryDB2text($db_name, $table_name, $output_name, $site_columns);
@@ -1051,7 +1074,20 @@ if (  1 == 1  ) { ?>
     ?>
 </div>
 <?php } ?>
-
+<!-- Image Preview Modal -->
+<div class="modal fade" id="imagePreviewModal" tabindex="-1" aria-labelledby="imagePreviewModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark">
+      <div class="modal-header">
+        <h5 class="modal-title text-white" id="imagePreviewModalLabel">图片预览</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body text-center">
+        <img id="modalImage" src="" class="img-fluid" style="max-height: 70vh; object-fit: contain;" alt="Preview">
+      </div>
+    </div>
+  </div>
+</div>
 </body>
   <script src="js/jquery.min.js"></script>
   <script src="js/bootstrap.bundle.min.js"></script>
@@ -1060,4 +1096,96 @@ if (  1 == 1  ) { ?>
   <!-- <script src="https://cdn.bootcdn.net/ajax/libs/jquery/3.5.1/jquery.min.js"></script> -->
   <!-- <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/js/bootstrap.min.js"></script> -->
   <script src="js/bootstrap-select.min.js"></script>
+
+  <script>
+    $(document).ready(function() {
+        const imgInput = $('#post_sitelogo');
+        const fileInput = $('#imageFileInput');
+        const uploadBtn = $('#imagesource');
+        const imgbbApiKey = '9fc1b0414d6169d761763120e0b33038'; // Your ImgBB key
+
+        // 1. Button click → trigger file select
+        uploadBtn.on('click', function() {
+            fileInput.click();
+        });
+
+        // 2. File selected → upload
+        fileInput.on('change', function(e) {
+            const file = e.target.files[0];
+            if (file && file.type.startsWith('image/')) {
+                uploadImageToImgBB(file);
+            }
+        });
+
+        // 3. Handle paste from clipboard (global listener)
+        $(document).on('paste', function(e) {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            if (!items) return;
+
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    const blob = items[i].getAsFile();
+                    if (blob) {
+                        uploadImageToImgBB(blob);
+                        e.preventDefault(); // Prevent default paste (e.g., in textarea)
+                        break;
+                    }
+                }
+            }
+        });
+
+        // 4. Upload function
+        function uploadImageToImgBB(file) {
+            const formData = new FormData();
+            formData.append('image', file);
+            formData.append('key', imgbbApiKey);
+
+            // Optional: show loading state
+            uploadBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-1"></i>上传中...');
+
+            fetch('https://api.imgbb.com/1/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    imgInput.val(result.data.url); // Insert full URL
+                    imgInput.trigger('input'); // Trigger any resize/listeners
+                } else {
+                    alert('上传失败: ' + (result.error?.message || '未知错误'));
+                }
+            })
+            .catch(error => {
+                console.error('Upload error:', error);
+                alert('上传过程中出错，请重试。');
+            })
+            .finally(() => {
+                uploadBtn.prop('disabled', false).html('<i class="fas fa-upload me-1"></i>上传');
+                fileInput.val(''); // Reset file input
+            });
+        }
+
+        // Image preview modal trigger
+        $('#previewImageTrigger').on('click', function() {
+            const imageUrl = $('#post_sitelogo').val().trim();
+            if (!imageUrl) {
+                // alert('请先输入或上传一张图片链接');
+                return;
+            }
+
+            // Basic validation: check if it looks like a URL
+            try {
+                new URL(imageUrl);
+            } catch (e) {
+                alert('图片链接格式无效');
+                return;
+            }
+
+            $('#modalImage').attr('src', imageUrl);
+            const modal = new bootstrap.Modal(document.getElementById('imagePreviewModal'));
+            modal.show();
+        });
+    });
+  </script>
 </html>

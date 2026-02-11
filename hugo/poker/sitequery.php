@@ -1,9 +1,6 @@
 <?php
-
 error_reporting(0);
-
 define("LocalPATH", dirname(__FILE__));
-
 $savedir = "keywordmonitor";
 $logFile = 'siteops_setting.txt';
 $taskfilePrefix = "tasklist_siteops_setting_";
