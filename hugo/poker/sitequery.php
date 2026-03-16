@@ -214,6 +214,21 @@ function queryDBAllColumn($db_name, $table_name, $search_value) {
     return $rows;
 }
 
+function getDomainCountMap($db_name) {
+    // Get count of domain from sitetopic table, grouped by domain
+    $db = new SQLite3($db_name);
+    $sql = "SELECT domain, COUNT(*) as cnt FROM sitetopic GROUP BY domain";
+    $result = $db->query($sql);
+    
+    $domainCountMap = [];
+    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+        $domainCountMap[$row['domain']] = (int)$row['cnt'];
+    }
+    
+    $db->close();
+    return $domainCountMap;
+}
+
 // function initDBlite($db_name, $table_name, $SQL) {
 //     $db = new SQLite3($db_name, SQLITE3_OPEN_CREATE | SQLITE3_OPEN_READWRITE);
 
@@ -241,7 +256,6 @@ $site_columns = ['ctx_id', 'git_name', 'status', 'theme_type', 'languages', 'dom
 
 $savedir = "sitemonitor";
 $logFile = 'siteops_setting.txt';
-$taskfilePrefix = "tasklist_siteops_setting_";
 
 function check_keyword_in_file($keyword, $file_path) {
     if (empty($keyword)) return true;
@@ -251,17 +265,9 @@ function check_keyword_in_file($keyword, $file_path) {
 if ($_SERVER["REQUEST_METHOD"] == "GET" && !empty($_GET['t'])) {
     $q = $_GET['t'];
     $limit = isset($_GET['limit']) && is_numeric($_GET['limit']) ? (int)$_GET['limit'] : 0;
-    $taskfile = $taskfilePrefix . md5($q) . ".txt";
 
     // Read and filter log lines
-    // $lines = @file($logFile, FILE_IGNORE_NEW_LINES);
-    // $lines = queryDBAllColumn($db_name, $table_name, $q);
-    // $lines = is_array($lines) ? $lines : [];
-    
     if ($q !== "all") {
-        // $filteredLines = array_filter($lines, function($line) use ($q) {
-        //     return preg_match('/"' . preg_quote($q, '/') . '"/', $line);
-        // });
         $lines = queryDBAllColumn($db_name, $table_name, $q);
     } else {
         $SQL = "";
@@ -271,6 +277,7 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" && !empty($_GET['t'])) {
     $filteredLines = [];
 
     foreach ($lines as $lineKey => $lineValue) {
+        $rowData = '';
         foreach ($site_columns as $column) {
             $rowData .= $lineValue[$column] . '|';
         }
@@ -293,32 +300,12 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" && !empty($_GET['t'])) {
             }
         }
         $response = $output;
-    } 
-    // LIMITED BRANCH: Return UP TO $limit "done" entries (cycle-safe)
+    }
+    // LIMITED BRANCH: Return UP TO $limit "done" entries, prioritize domains with smallest count in sitetopic
     else {
-        // Load/reset task tracking
-        $doneLines = [];
-        if (file_exists($taskfile)) {
-            $doneLines = @file($taskfile, FILE_IGNORE_NEW_LINES);
-            $doneLines = is_array($doneLines) ? array_unique($doneLines) : [];
-            if (count($doneLines) >= count($filteredLines)) {
-                $doneLines = [];
-                @unlink($taskfile);
-            }
-        }
-
-        // var_dump($filteredLines);
-        // var_dump($doneLines);
-
-        $availableLines = array_diff($filteredLines, $doneLines);
-        if (empty($availableLines)) {
-            $doneLines = [];
-            $availableLines = $filteredLines;
-        }
-
-        // CRITICAL FIX: Filter AVAILABLE lines to ONLY "done" status entries
+        // Filter lines to ONLY "done" status entries
         $candidateLines = [];
-        foreach ($availableLines as $line) {
+        foreach ($filteredLines as $line) {
             $parts = explode('|', $line);
             if (count($parts) < 2) continue;
             $jsondata = end($parts);
@@ -327,30 +314,44 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" && !empty($_GET['t'])) {
             if (isset($siteData['status']) && $siteData['status'] === "done") {
                 $candidateLines[] = $line;
             }
-            // Non-"done" lines are SKIPPED and NOT marked as processed
         }
 
-        // var_dump($candidateLines);
-        // Select randomized subset of valid "done" entries
-        shuffle($candidateLines);
+        // Get domain count map from sitetopic table
+        $domainCountMap = getDomainCountMap($db_name);
+
+        // Sort candidate lines by domain count (ascending), then randomly
+        usort($candidateLines, function($a, $b) use ($domainCountMap) {
+            $partsA = explode('|', $a);
+            $partsB = explode('|', $b);
+
+            // domain is the 6th column (index 5) in site_columns
+            $domainA = isset($partsA[5]) ? $partsA[5] : '';
+            $domainB = isset($partsB[5]) ? $partsB[5] : '';
+
+            $countA = isset($domainCountMap[$domainA]) ? $domainCountMap[$domainA] : 0;
+            $countB = isset($domainCountMap[$domainB]) ? $domainCountMap[$domainB] : 0;
+
+            // Primary sort: by domain count (ascending)
+            if ($countA !== $countB) {
+                return $countA - $countB;
+            }
+
+            // Secondary sort: random order when counts are equal
+            return rand(-1, 1);
+        });
+
+        // Select top $limit entries
         $selectedLines = array_slice($candidateLines, 0, $limit);
 
-        // Build response AND track ONLY served "done" lines
+        // Build response
         $output = [];
-        $newDoneLines = [];
         foreach ($selectedLines as $line) {
             $parts = explode('|', $line);
             $jsondata = end($parts);
-            $siteData = json_decode($jsondata, true); // Already validated above
+            $siteData = json_decode($jsondata, true);
             $output[] = array('id' => $parts[0]) + $siteData;
-            $newDoneLines[] = $line;
         }
 
-        // Persist tracking ONLY for successfully served "done" entries
-        $doneLines = array_unique(array_merge($doneLines, $newDoneLines));
-        if (!empty($doneLines)) {
-            file_put_contents($taskfile, implode("\n", $doneLines));
-        }
         $response = $output;
     }
 

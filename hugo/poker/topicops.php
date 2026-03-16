@@ -272,8 +272,8 @@ if (!empty($_GET['eid'])) {
         "keyword" => "",
         "pubdir" => "",
         "status" => "",
-        "lang" => "",
-        "geo" => "",
+        "lang" => "zh",
+        "geo" => "CN",
         "lasttask" => "",
         "json" => '',
         "time" => ""
@@ -308,7 +308,7 @@ if ($topic_data) { ?>
             <label for="">启用批量</label>
             <div class="checkbox">
               <label>
-                <input type="checkbox" value="enable" id="post_bulkkeyword" name="post_bulkkeyword">
+                <input type="checkbox" value="enable" id="post_bulkkeyword" name="post_bulkkeyword" checked>
               </label>
             </div>
             </div>
