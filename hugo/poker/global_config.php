@@ -5,6 +5,7 @@ return [
         'siteConfigServerURL' => 'https://wptg.wptdata.com',
         'log_file' => 'editor_poker_allpost_list.txt',
         'seoCommonFileName' => 'seocommon_poker_article_original.json',
+        'database' => 'sitedata.sqlite',
     ],
     'gitaccount' => [
         // 'wptcard' => 'wptcard',
