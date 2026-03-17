@@ -6,6 +6,7 @@ return [
         'siteConfigServerURL' => 'localhost:8888',
         'log_file' => 'editor_sport_allpost_list.txt',
         'seoCommonFileName' => 'seocommon_sport_article_original.json',
+        'database' => 'sitedata.sqlite',
     ],
     'gitaccount' => [
         'betnihon' => 'betnihon',
