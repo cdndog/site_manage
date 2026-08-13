@@ -2,3 +2,10 @@
 vendor/
 .DS_Store
 **/.DS_Store
+/hugo/autobot/json
+**/sitedata.sqlite
+**/aigc_status.json
+**/.agents
+**/.claude
+**/skills-lock.json
+**/autobot
