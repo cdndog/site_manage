@@ -9,3 +9,10 @@ vendor/
 **/.claude
 **/skills-lock.json
 **/autobot
+/hugo/poker/demo_dashboard
+/hugo/poker/sitebulkops
+/hugo/poker/keywordmonitor
+hugo/poker/keyword_monitor_list.txt
+hugo/poker/siteops_setting.txt
+hugo/poker/siteops_submit.log
+/hugo/poker/tests

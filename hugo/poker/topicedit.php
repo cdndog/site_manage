@@ -1,4 +1,12 @@
 <?php
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Max-Age: 86400');
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
 if (!file_exists('global_config.php')) {
     die('file global_config.php not found.');
 }
@@ -6,12 +14,13 @@ if (!file_exists('global_config.php')) {
 $config = include 'global_config.php';
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <title>V2 站点生成文章与关键词</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="css/bootstrap.min.css">
+  <link rel="stylesheet" href="css/theme.css">
   <link rel="stylesheet" href="css/bootstrap-icons.css" />
   <link rel="stylesheet" href="css/bootstrap-select.min.css" />
   <link rel="stylesheet" href="css/bootstrap-table.min.css">

@@ -6,6 +6,16 @@ return [
         'log_file' => 'editor_poker_allpost_list.txt',
         'seoCommonFileName' => 'seocommon_poker_article_original.json',
         'database' => 'sitedata.sqlite',
+        'imgbb_api_key' => [
+            '9fc1b0414d6169d761763120e0b33038',
+        ],
+        // 顶部导航功能入口（header 模块）：['title' => 名称, 'url' => 入口, 'icon' => bootstrap-icons 类名]
+        // 未配置时使用默认值：站点录入 / SEO 报表。新增功能入口只需在此追加一行
+        // 'header_modules' => [
+        //     ['title' => '站点录入', 'url' => 'siteops.php', 'icon' => 'bi-pencil-square'],
+        //     ['title' => 'SEO 报表', 'url' => 'seo_report.php', 'icon' => 'bi-bar-chart-line'],
+        //     ['title' => '我的新功能', 'url' => 'new_feature.php', 'icon' => 'bi-star'],
+        // ],
     ],
     'gitaccount' => [
         // 'wptcard' => 'wptcard',

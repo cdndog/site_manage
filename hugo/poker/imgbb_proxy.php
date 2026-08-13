@@ -2,4 +2,4 @@
 
 require __DIR__ . '/app/bootstrap.php';
 
-App\Controllers\SiteController::dispatch();
+App\Controllers\ImgBBController::dispatch();
