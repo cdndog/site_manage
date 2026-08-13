@@ -39,7 +39,7 @@
       }
 
       function topicEditer(value, row, index) {
-        return '<a class="btn btn-sm btn-outline-primary" target="_blank" href="topicedit.php?eid=' + row.ctx_id + '" title="Editor"><i class="bi bi-pencil-square mr-1" aria-hidden="true"></i>编辑</a>';
+        return '<a class="btn btn-sm btn-outline-primary" target="_blank" href="topicops.php?eid=' + row.ctx_id + '" title="Editor"><i class="bi bi-pencil-square mr-1" aria-hidden="true"></i>编辑</a>';
       }
 
       (function () {

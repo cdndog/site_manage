@@ -359,7 +359,7 @@ body[data-sidebar-size="collapsed"] .sops-sidebar-link::before { display: none; 
 .footer-sops { background: var(--sops-surface); border-top: 1px solid var(--sops-border); color: var(--sops-muted); }
 
 /* ---------- 按钮 ---------- */
-.btn { border-radius: var(--sops-radius); font-weight: 500; }
+.btn { border-radius: var(--sops-radius); font-weight: 500; font-size: .875rem; }
 .btn-primary { background-color: var(--sops-indigo); border-color: var(--sops-indigo); }
 .btn-primary:hover, .btn-primary:focus { background-color: #5a55e0; border-color: #5a55e0; box-shadow: 0 4px 10px rgba(111, 106, 248, .35); }
 .btn-primary:not(:disabled):not(.disabled):active { background-color: #4a46c9; border-color: #4a46c9; box-shadow: none; }

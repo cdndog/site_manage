@@ -16,3 +16,5 @@ hugo/poker/keyword_monitor_list.txt
 hugo/poker/siteops_setting.txt
 hugo/poker/siteops_submit.log
 /hugo/poker/tests
+/hugo/poker/topicmonitor
+hugo/poker/topic_monitor_list.txt

@@ -301,7 +301,7 @@ if ($topic_data) { ?>
         <div class="row" hidden>
             <div class="col-md-12 col-xs-12">
             <label for="post_uuid">文章与关键词ID</label>
-            <input type="text" class="form-control form-control-sm" id="post_uuid" name="post_uuid" value="<?php echo htmlspecialchars($topic_data['ctx_id']) ;?>">
+            <input type="text" class="form-control" id="post_uuid" name="post_uuid" value="<?php echo htmlspecialchars($topic_data['ctx_id']) ;?>">
             <div class="invalid-feedback"> 生成文章ID </div>
             </div>
          </div>
@@ -310,7 +310,7 @@ if ($topic_data) { ?>
         <div class="row">
             <div class="col-md-9 col-xs-12">
             <label for="post_gitname">生成文章及关键词</label>
-            <input type="text" class="form-control form-control-sm" id="post_keyword" name="post_keyword" required placeholder="录入需要批量生成文章及关键词" value="<?php echo htmlspecialchars($topic_data['keyword']) ;?>">
+            <input type="text" class="form-control" id="post_keyword" name="post_keyword" required placeholder="录入需要批量生成文章及关键词" value="<?php echo htmlspecialchars($topic_data['keyword']) ;?>" pattern="[^|｜]*" maxlength="1000" data-msg="关键词不能包含 ｜">
             <div class="invalid-feedback"> 录入需要生成文章及关键词 </div>
             </div>
             <div class="col-md-3 col-xs-12">
@@ -325,7 +325,7 @@ if ($topic_data) { ?>
          <div class="row">
             <div class="col-md-6 col-xs-12">
                 <label for="post_gitname">发布到站点(github仓库名)</label>
-                <select class="selectpicker form-control form-control-sm" id="post_gitname" name="post_gitname" size="1" data-show-subtext="true" data-live-search="true" required>
+                <select class="selectpicker form-control" id="post_gitname" name="post_gitname" size="1" data-show-subtext="true" data-live-search="true" required>
                     <option data-subtext="">Choose a gitname</option>
                 <?php foreach ( SiteGitnameList as $sitedata ) :?>
                 <option data-subtext="<?php if (!empty($sitedata['languages']) ) { echo $sitedata['git_name'].'('.$sitedata['languages'].')';} else {echo $sitedata['git_name']; } ?>" <?php if ($sitedata['git_name'] == $topic_data["git_name"]) {echo "selected";} ?> ><?php echo $sitedata['git_name'];?></option>
@@ -334,7 +334,7 @@ if ($topic_data) { ?>
             </div>
             <div class="col-md-6 col-xs-12">
                 <label for="post_gitname">发布到站点(域名)</label>
-                <select class="selectpicker form-control form-control-sm" id="post_domain" name="post_domain" size="1" data-show-subtext="true" data-live-search="true" required>
+                <select class="selectpicker form-control" id="post_domain" name="post_domain" size="1" data-show-subtext="true" data-live-search="true" required>
                     <option data-subtext="">Choose a Domain</option>
                 <?php foreach ( SiteGitnameList as $sitedata ) :?>
                 <option data-subtext="<?php if (!empty($sitedata['languages']) ) { echo $sitedata['domain'].'('.$sitedata['languages'].')';} else {echo $sitedata['domain']; } ?>" <?php if ($sitedata['domain'] == $topic_data["domain"]) {echo "selected";} ?>><?php echo $sitedata['domain'];?></option>
@@ -343,7 +343,7 @@ if ($topic_data) { ?>
             </div>
 
         </div>
-        <input type="text" class="form-control form-control-sm sr-readonly" id="setupNum" name="setupNum" size=60 value="ckeditorFormated" readonly style="display: none;">
+        <input type="text" class="form-control sr-readonly" id="setupNum" name="setupNum" size=60 value="ckeditorFormated" readonly style="display: none;">
 
     </div>
 
@@ -351,7 +351,7 @@ if ($topic_data) { ?>
       <div class="row">
         <div class="col-md-3 col-xs-12">
           <label for="post_lang">站点语言</label>
-          <select data-show-subtext="true" data-live-search="true" class="selectpicker form-control form-control-sm" id="post_lang" name="post_lang" required>
+          <select data-show-subtext="true" data-live-search="true" class="selectpicker form-control" id="post_lang" name="post_lang" required>
             <?php foreach ($config['languages'] as $label => $value ): ?>
             <option data-subtext="<?php echo $label; ?>" <?php echo strtolower($value) === strtolower($topic_data["lang"]) ? 'selected' : ''; ?>>
                 <?php echo $value; ?>
@@ -361,7 +361,7 @@ if ($topic_data) { ?>
         </div>
         <div class="col-md-3 col-xs-12">
           <label for="post_geo">国家地区</label>
-          <select data-show-subtext="true" data-live-search="true" class="selectpicker form-control form-control-sm" id="post_geo" name="post_geo" required>
+          <select data-show-subtext="true" data-live-search="true" class="selectpicker form-control" id="post_geo" name="post_geo" required>
              <?php foreach ($config['countries'] as $label => $value ): ?>
             <option data-subtext="<?php echo $label; ?>" <?php echo strtolower($value) === strtolower($topic_data["geo"]) ? 'selected' : ''; ?>>
                 <?php echo $value; ?>
@@ -371,7 +371,7 @@ if ($topic_data) { ?>
         </div>
         <div class="col-md-3 col-xs-12">
           <label for="post_pubdir">发布目录</label>
-          <select class="selectpicker form-control form-control-sm" id="post_pubdir" name="post_pubdir" required>
+          <select class="selectpicker form-control" id="post_pubdir" name="post_pubdir" required>
              <?php foreach ($config['pubdir'] as $label => $value ): ?>
             <option data-subtext="<?php echo $label; ?>" <?php echo strtolower($value) === strtolower($topic_data["pubdir"]) ? 'selected' : ''; ?>>
                 <?php echo $value; ?>
@@ -381,7 +381,7 @@ if ($topic_data) { ?>
         </div>
         <div class="col-md-3 col-xs-12">
           <label for="post_status">状态</label>
-          <select data-show-subtext="true" data-live-search="true" class="selectpicker form-control form-control-sm" id="post_status" name="post_status" required>
+          <select data-show-subtext="true" data-live-search="true" class="selectpicker form-control" id="post_status" name="post_status" required>
              <?php foreach ($config['statuses'] as $label => $value ): ?>
             <option data-subtext="<?php echo $label; ?>" <?php echo strtolower($value) === strtolower($topic_data["status"]) ? 'selected' : ''; ?>>
                 <?php echo $value; ?>
@@ -392,10 +392,24 @@ if ($topic_data) { ?>
       </div>
     </div>
    
-    <button type="submit" class="btn btn-primary btn-block">提交入库</button>
+    <button type="submit" class="btn btn-primary px-5"><i class="bi bi-check-circle mr-1" aria-hidden="true"></i>提交入库</button>
 </form>
 
 <script>
+    // 自定义校验提示：pattern / maxlength 违规时显示 data-msg 中文提示
+    (function () {
+        document.querySelectorAll('[data-msg]').forEach(function (el) {
+            el.addEventListener('invalid', function () {
+                if (el.validity.patternMismatch || el.validity.tooLong) {
+                    el.setCustomValidity(el.getAttribute('data-msg'));
+                }
+            });
+            el.addEventListener('input', function () {
+                el.setCustomValidity('');
+            });
+        });
+    })();
+
     // Get the form element
     var form = document.getElementById('formtable');
 

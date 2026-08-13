@@ -85,7 +85,7 @@
         </div>
         <hr>
         <div>
-            <a class="btn btn-sm btn-primary" href="./topicedit.php"><i class="bi bi-pencil mr-1" aria-hidden="true"></i>录入网站文章标题</a>
+            <a class="btn btn-sm btn-primary" href="./topicops.php"><i class="bi bi-pencil mr-1" aria-hidden="true"></i>录入网站文章标题</a>
         </div>
     </div>
   </div>
