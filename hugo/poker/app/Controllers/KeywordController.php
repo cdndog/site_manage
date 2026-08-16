@@ -17,11 +17,13 @@ class KeywordController
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: SAMEORIGIN');
         try {
+            Security::requireApiToken(true);
             Security::ensureUidCookie();
-            if (!Security::authValid()) {
+            if (!Security::authValid() && !Security::isGitServerIp()) {
                 AuthController::handle();
                 return;
             }
+            Security::requirePermission('keyword.manage');
             render('layout_head', ['page_title' => '关键词配置']);
             render('header');
             $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
@@ -31,7 +33,7 @@ class KeywordController
                 self::handleGet();
             }
         } catch (\Throwable $e) {
-            self::renderError($e);
+            renderErrorPage($e);
         }
     }
 

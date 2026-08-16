@@ -25,11 +25,13 @@ class TopicController
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: SAMEORIGIN');
         try {
+            Security::requireApiToken(true);
             Security::ensureUidCookie();
-            if (!Security::authValid()) {
+            if (!Security::authValid() && !Security::isGitServerIp()) {
                 AuthController::handle();
                 return;
             }
+            Security::requirePermission('topic.manage');
             render('layout_head', ['page_title' => '话题录入']);
             render('header');
             if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -40,7 +42,7 @@ class TopicController
             render('footer');
             render('layout_tail');
         } catch (\Throwable $e) {
-            self::renderError($e);
+            renderErrorPage($e);
         }
     }
 
@@ -110,6 +112,13 @@ class TopicController
 
     public static function dispatchList()
     {
+        Security::requireApiToken(true);
+        Security::requirePermission('topic.view');
+        $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+        if ($method === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete-topic') {
+            self::handleTopicDelete();
+            return;
+        }
         $data = self::listData();
         if ($data === null) {
             return;
@@ -117,8 +126,28 @@ class TopicController
         self::shell('话题列表', 'topic_list', $data);
     }
 
+    private static function handleTopicDelete()
+    {
+        Security::requirePermission('topic.manage');
+        if (!Security::csrfVerify(isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '')) {
+            http_response_code(403);
+            render('error', ['message' => 'CSRF token invalid, please reload the page and try again.']);
+            return;
+        }
+        $ctxId = isset($_POST['ctx_id']) ? trim((string)$_POST['ctx_id']) : '';
+        if ($ctxId === '' || TopicRepository::byCtxId($ctxId) === null) {
+            self::emitJson(['total' => 0, 'rows' => [['ok' => false, 'message' => 'topic not found']]]);
+            return;
+        }
+        TopicRepository::deleteByCtxId($ctxId);
+        TopicService::export();
+        self::emitJson(['total' => 1, 'rows' => [['ok' => true, 'message' => 'deleted']]]);
+    }
+
     public static function dispatchTable()
     {
+        Security::requireApiToken(true);
+        Security::requirePermission('topic.view');
         $data = self::tableData();
         if ($data === null) {
             return;
@@ -143,6 +172,7 @@ class TopicController
             'page' => $page,
             'per_page' => $perPage,
             'search' => $search,
+            'csrf_token' => Security::csrfToken(),
         ];
     }
 
@@ -245,17 +275,18 @@ class TopicController
         header('X-Frame-Options: SAMEORIGIN');
         try {
             Security::ensureUidCookie();
-            if (!Security::authValid()) {
+            if (!Security::authValid() && !Security::isGitServerIp()) {
                 AuthController::handle();
                 return;
             }
+            Security::requirePermission('topic.view');
             render('layout_head', ['page_title' => $pageTitle]);
             render('header');
             render($view, $data);
             render('footer');
             render('layout_tail');
         } catch (\Throwable $e) {
-            self::renderError($e);
+            renderErrorPage($e);
         }
     }
 

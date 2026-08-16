@@ -2,6 +2,9 @@
 
 ini_set('memory_limit', '256M');
 
+require __DIR__ . '/app/bootstrap.php';
+\App\Support\Security::requireApiToken();
+
 // Function to make the array of objects unique based on "$key"
 
 function makeArrayUnique($array, $key) {

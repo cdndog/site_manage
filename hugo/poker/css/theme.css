@@ -45,7 +45,7 @@ body {
   background-color: var(--sops-bg);
   color: var(--sops-text);
   font-family: var(--sops-font);
-  font-size: .9375rem;
+  font-size: .875rem;
   line-height: 1.6;
   touch-action: manipulation;
   -webkit-tap-highlight-color: rgba(0, 0, 0, .08);
@@ -484,7 +484,7 @@ label { font-weight: 500; color: #374151; margin-bottom: .25rem; font-size: .812
 
 /* ---------- 表格 ---------- */
 .table thead th {
-  font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+  font-size: .875rem; text-transform: uppercase; letter-spacing: .05em;
   color: var(--sops-muted); border-bottom: 1px solid var(--sops-border);
   background: #fafbfc; white-space: nowrap;
 }
@@ -494,16 +494,22 @@ label { font-weight: 500; color: #374151; margin-bottom: .25rem; font-size: .812
 .bootstrap-table .table td,
 .bootstrap-table .table th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bootstrap-table .table td { position: relative; }
+.bootstrap-table .table td.op-col,
+.bootstrap-table .table th.op-col {
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
 @media (hover: hover) {
-  .bootstrap-table .table td:hover {
+  .bootstrap-table .table td:hover:not(.op-col) {
     overflow: visible;
     white-space: normal;
     word-break: break-word;
     background: var(--sops-bg, #fff);
     z-index: 5;
   }
-  .bootstrap-table .table td:hover .cell-link,
-  .bootstrap-table .table td:hover a { overflow-wrap: anywhere; }
+  .bootstrap-table .table td:hover:not(.op-col) .cell-link,
+  .bootstrap-table .table td:hover:not(.op-col) a { overflow-wrap: anywhere; }
 }
 
 /* ---------- 弹窗 ---------- */

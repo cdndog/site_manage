@@ -2,6 +2,9 @@
 // uivision_upload.php - 高性能文件上传端点
 declare(strict_types=1);
 
+require __DIR__ . '/app/bootstrap.php';
+\App\Support\Security::requireApiToken();
+
 // CORS：允许跨域 fetch 上传（UiVision ExecuteScript 从其他站点发起）
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');

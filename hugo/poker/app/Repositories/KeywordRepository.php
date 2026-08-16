@@ -36,6 +36,16 @@ class KeywordRepository
         );
     }
 
+    public static function deleteByCtxId($ctxId)
+    {
+        self::ensureTable();
+        $db = Database::connection();
+        $statement = $db->prepare('DELETE FROM "keywordmonitorlist" WHERE "ctx_id" = :ctx_id');
+        $statement->bindValue(':ctx_id', (string)$ctxId);
+        $statement->execute();
+        return $db->changes() > 0;
+    }
+
     public static function upsertByKeyword(array $record)
     {
         self::ensureTable();

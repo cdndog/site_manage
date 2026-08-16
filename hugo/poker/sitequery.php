@@ -4,6 +4,9 @@ error_reporting(0);
 
 define("LocalPATH", dirname(__FILE__));
 
+require __DIR__ . '/app/bootstrap.php';
+\App\Support\Security::requireApiToken();
+
 function renewDBtable($db_name, $table_name, $sitedatas, $query_column, $renew_columns) {
 
     $db = new SQLite3($db_name, SQLITE3_OPEN_CREATE | SQLITE3_OPEN_READWRITE);

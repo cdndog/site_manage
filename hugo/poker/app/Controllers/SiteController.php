@@ -18,11 +18,13 @@ class SiteController
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: SAMEORIGIN');
         try {
+            Security::requireApiToken(true);
             Security::ensureUidCookie();
-            if (!Security::authValid()) {
+            if (!Security::authValid() && !Security::isGitServerIp()) {
                 AuthController::handle();
                 return;
             }
+            Security::requirePermission('site.manage');
             render('layout_head', ['page_title' => '站点录入']);
             render('header');
             $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
@@ -32,7 +34,7 @@ class SiteController
                 self::handleGet();
             }
         } catch (\Throwable $e) {
-            self::renderError($e);
+            renderErrorPage($e);
         }
     }
 
@@ -65,7 +67,11 @@ class SiteController
             render('layout_tail');
             return;
         }
-        if (!Security::csrfVerify(isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '')) {
+        $csrf = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
+        if ($csrf === '' && isset($_SERVER['HTTP_X_CSRF_TOKEN'])) {
+            $csrf = $_SERVER['HTTP_X_CSRF_TOKEN'];
+        }
+        if (!Security::csrfVerify($csrf)) {
             http_response_code(403);
             render('error', ['message' => 'CSRF token invalid, please reload the page and try again.']);
             render('footer');

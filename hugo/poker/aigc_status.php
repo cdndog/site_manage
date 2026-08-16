@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 
+require __DIR__ . '/app/bootstrap.php';
+\App\Support\Security::requireApiToken();
+
 $file = __DIR__ . '/aigc_status.json';
 
 $rawScope = isset($_GET['scope']) ? trim((string)$_GET['scope']) : '7';

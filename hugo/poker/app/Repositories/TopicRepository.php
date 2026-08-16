@@ -25,6 +25,8 @@ class TopicRepository
             "json" VARCHAR,
             "time" DATETIME
         )');
+        Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_sitetopic_status" ON "sitetopic" ("status")');
+        Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_sitetopic_keyword" ON "sitetopic" ("keyword")');
     }
 
     public static function byCtxId($ctxId)
@@ -37,6 +39,16 @@ class TopicRepository
             'SELECT * FROM "sitetopic" WHERE "ctx_id" = :ctx_id LIMIT 1',
             ['ctx_id' => $ctxId]
         );
+    }
+
+    public static function deleteByCtxId($ctxId)
+    {
+        self::ensureTable();
+        $db = Database::connection();
+        $statement = $db->prepare('DELETE FROM "sitetopic" WHERE "ctx_id" = :ctx_id');
+        $statement->bindValue(':ctx_id', (string)$ctxId);
+        $statement->execute();
+        return $db->changes() > 0;
     }
 
     public static function byKeywordAndGitName($keyword, $gitName)

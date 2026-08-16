@@ -1,4 +1,7 @@
 <?php
+require __DIR__ . '/app/bootstrap.php';
+\App\Support\Security::requireApiToken();
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_FILES['uploadedFile']) && $_FILES['uploadedFile']['error'] === UPLOAD_ERR_OK) {
         // Directory to save uploaded files

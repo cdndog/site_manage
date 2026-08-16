@@ -39,7 +39,47 @@
       }
 
       function topicEditer(value, row, index) {
-        return '<a class="btn btn-sm btn-outline-primary" target="_blank" href="topicops.php?eid=' + row.ctx_id + '" title="Editor"><i class="bi bi-pencil-square mr-1" aria-hidden="true"></i>编辑</a>';
+        var html = '<a class="btn btn-sm btn-outline-primary" target="_blank" href="topicops.php?eid=' + row.ctx_id + '" title="Editor"><i class="bi bi-pencil-square mr-1" aria-hidden="true"></i>编辑</a>';
+        html += '<a class="btn btn-sm btn-outline-danger ml-1" href="javascript:void(0)" onclick="topicDeleteConfirm(this, \'' + row.ctx_id + '\', \'' + String(row.keyword || row.git_name || '').replace(/'/g, '') + '\')"><i class="bi bi-trash mr-1" aria-hidden="true"></i>删除</a>';
+        return html;
+      }
+
+      var topicDeleteTarget = null;
+      function topicDeleteConfirm(btn, ctxId, label) {
+        topicDeleteTarget = ctxId;
+        document.getElementById('topicDeleteLabel').textContent = String(label || ctxId);
+        window.jQuery('#topicDeleteModal').modal('show');
+      }
+
+      function topicDeleteExecute() {
+        if (!topicDeleteTarget) { return; }
+        var csrf = '<?php echo e(isset($csrf_token) ? $csrf_token : ''); ?>';
+        var payload = 'action=delete-topic&ctx_id=' + encodeURIComponent(topicDeleteTarget) + '&csrf_token=' + encodeURIComponent(csrf);
+        window.jQuery('#topicDeleteModal').modal('hide');
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', 'topiclist.php', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState === 4) {
+            if (xhr.status === 200) {
+              var resp = null;
+              try { resp = JSON.parse(xhr.responseText); } catch (e) {}
+              var ok = resp && resp.rows && resp.rows[0] && resp.rows[0].ok;
+              if (ok) {
+                if (window.jQuery && window.jQuery.fn && window.jQuery.fn.bootstrapTable) {
+                  jQuery('#table').bootstrapTable('refresh');
+                } else {
+                  window.location.reload();
+                }
+              } else {
+                window.alert((resp && resp.rows && resp.rows[0] && resp.rows[0].message) ? resp.rows[0].message : '删除失败');
+              }
+            } else {
+              window.alert('删除失败 (HTTP ' + xhr.status + ')');
+            }
+          }
+        };
+        xhr.send(payload);
       }
 
       (function () {
@@ -72,7 +112,7 @@
                 { field: 'lasttask', title: '发布时间', sortable: true },
                 { field: 'lang', title: '语言', sortable: true },
                 { field: 'geo', title: '区域', sortable: true },
-                { field: 'ctx_id', title: '操作', formatter: topicEditer }
+                { field: 'ctx_id', title: '操作', class: 'op-col', width: 150, align: 'center', formatter: topicEditer }
               ],
               search: true,
               showToggle: true,
@@ -118,3 +158,25 @@
     </div>
   </div>
 </div>
+<?php if ($total > 0): ?>
+<div class="modal fade" id="topicDeleteModal" tabindex="-1" role="dialog" aria-labelledby="topicDeleteModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="topicDeleteModalTitle"><i class="bi bi-exclamation-triangle text-danger mr-1" aria-hidden="true"></i>删除话题</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p>确定要删除话题「<strong id="topicDeleteLabel"></strong>」吗？</p>
+        <p class="text-danger small mb-0">删除后该话题将从话题列表移除并重新导出配置，此操作不可恢复。</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-danger" onclick="topicDeleteExecute()"><i class="bi bi-trash mr-1" aria-hidden="true"></i>确定删除</button>
+      </div>
+    </div>
+  </div>
+</div>
+<?php endif; ?>

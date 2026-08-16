@@ -15,6 +15,15 @@ class SiteRepository
         );
     }
 
+    public static function deleteByCtxId($ctxId)
+    {
+        $db = Database::connection();
+        $statement = $db->prepare('DELETE FROM "siteops" WHERE "ctx_id" = :ctx_id');
+        $statement->bindValue(':ctx_id', (string)$ctxId);
+        $statement->execute();
+        return $db->changes() > 0;
+    }
+
     public static function upsertByDomain(array $site)
     {
         $db = Database::connection();

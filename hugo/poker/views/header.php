@@ -1,7 +1,7 @@
 <?php
 $current = isset($_SERVER['PHP_SELF']) ? basename($_SERVER['PHP_SELF']) : '';
 $currentQuery = isset($_SERVER['QUERY_STRING']) ? (string)$_SERVER['QUERY_STRING'] : '';
-$modules = App\Config::headerModules();
+$modules = App\Config::headerModulesFor(App\Support\Security::permissions());
 $urlMatches = function ($url) use ($current, $currentQuery) {
     $path = parse_url($url, PHP_URL_PATH);
     if ($current === '' || $path === null || basename($path) !== $current) {

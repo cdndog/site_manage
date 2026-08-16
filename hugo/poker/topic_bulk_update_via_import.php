@@ -2,6 +2,9 @@
 
 ini_set('memory_limit', '256M');
 
+require __DIR__ . '/app/bootstrap.php';
+\App\Support\Security::requireApiToken();
+
 if (!file_exists('global_config.php')) {
     die('file global_config.php not found.');
 }

@@ -12,6 +12,7 @@ class ImgBBController
         header('Content-Type: application/json; charset=utf-8');
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: SAMEORIGIN');
+        Security::requireApiToken();
         $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
         if ($method !== 'POST') {
             self::respond(405, ['success' => false, 'error' => ['message' => 'method not allowed']]);

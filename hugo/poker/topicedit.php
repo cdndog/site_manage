@@ -12,6 +12,20 @@ if (!file_exists('global_config.php')) {
 }
 
 $config = include 'global_config.php';
+
+require __DIR__ . '/app/bootstrap.php';
+App\Support\Security::requireApiToken(true);
+App\Support\Security::ensureUidCookie();
+if (!App\Support\Security::authValid() && !App\Support\Security::isGitServerIp()) {
+    App\Controllers\AuthController::handle();
+    exit;
+}
+try {
+    App\Support\Security::requirePermission('topic.view');
+} catch (\Throwable $e) {
+    renderErrorPage($e);
+    exit;
+}
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
