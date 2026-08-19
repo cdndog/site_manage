@@ -90,6 +90,57 @@ class Config
         return isset($config[$key]) ? $config[$key] : $default;
     }
 
+    public static function wechatConfigFile()
+    {
+        $env = getenv('APP_WECHAT_COOKIE_FILE');
+        if ($env !== false && $env !== '') {
+            return $env;
+        }
+        return APP_PATH . '/wechat.cookie.php';
+    }
+
+    public static function wechatConfig()
+    {
+        $defaults = [
+            'http_headers' => [
+                'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+                'Accept-Encoding: identity',
+                'Cache-Control: no-cache',
+                'Pragma: no-cache',
+                'Upgrade-Insecure-Requests: 1',
+                'Sec-Ch-Ua: "Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
+                'Sec-Ch-Ua-Mobile: ?0',
+                'Sec-Ch-Ua-Platform: "macOS"',
+                'Sec-Fetch-Dest: document',
+                'Sec-Fetch-Mode: navigate',
+                'Sec-Fetch-Site: none',
+                'Sec-Fetch-User: ?1',
+            ],
+            'cookie' => '',
+            'wechat_forwarded_for' => '',
+            'proxy' => '',
+            'connect_timeout' => 15,
+            'timeout' => 30,
+            'max_retries' => 2,
+        ];
+        $config = self::all();
+        $merged = array_merge($defaults, isset($config['wechat']) && is_array($config['wechat']) ? $config['wechat'] : []);
+        $cookieFile = self::wechatConfigFile();
+        if (file_exists($cookieFile)) {
+            $cookieConfig = include $cookieFile;
+            if (is_array($cookieConfig)) {
+                $merged = array_merge($merged, $cookieConfig);
+                if (empty($cookieConfig['http_headers'])) {
+                    unset($merged['http_headers']);
+                    $merged['http_headers'] = $defaults['http_headers'];
+                }
+            }
+        }
+        return $merged;
+    }
+
     public static function dbFile()
     {
         if (self::$dbFileOverride !== null) {
@@ -198,6 +249,17 @@ class Config
                 ],
             ],
             [
+                'title' => '文章管理',
+                'url' => 'article_new.php',
+                'icon' => 'bi-file-earmark-text',
+                'perm' => 'article.manage',
+                'children' => [
+                    ['title' => '新建文章', 'url' => 'article_new.php', 'icon' => 'bi-plus-circle', 'perm' => 'article.manage'],
+                    ['title' => '文章列表', 'url' => 'article_list.php', 'icon' => 'bi-list-ul', 'perm' => 'article.view'],
+                    ['title' => '微信导入', 'url' => 'wechat_import.php', 'icon' => 'bi-wechat', 'perm' => 'article.manage'],
+                ],
+            ],
+            [
                 'title' => '系统管理',
                 'url' => 'users.php',
                 'icon' => 'bi-shield-lock',
@@ -258,6 +320,8 @@ class Config
             'keyword.manage' => ['name' => '关键词-录入编辑', 'description' => '新建/编辑/提交关键词'],
             'topic.view' => ['name' => '话题-查看', 'description' => '查看话题列表与报表'],
             'topic.manage' => ['name' => '话题-录入编辑', 'description' => '新建/编辑/提交话题'],
+            'article.view' => ['name' => '文章-查看', 'description' => '查看文章列表'],
+            'article.manage' => ['name' => '文章-录入编辑', 'description' => '新建/编辑/保存文章'],
             'report.view' => ['name' => '报表-查看', 'description' => '查看 SEO 报表'],
             'user.manage' => ['name' => '系统-用户角色管理', 'description' => '管理用户与角色权限'],
             'config.manage' => ['name' => '系统-配置管理', 'description' => '管理业务字典配置'],
@@ -277,8 +341,8 @@ class Config
     {
         return [
             'admin' => array_keys(self::permissions()),
-            'editor' => ['site.manage', 'site.view', 'keyword.manage', 'keyword.view', 'topic.manage', 'topic.view', 'report.view'],
-            'viewer' => ['site.view', 'keyword.view', 'topic.view', 'report.view'],
+            'editor' => ['site.manage', 'site.view', 'keyword.manage', 'keyword.view', 'topic.manage', 'topic.view', 'article.manage', 'article.view', 'report.view'],
+            'viewer' => ['site.view', 'keyword.view', 'topic.view', 'article.view', 'report.view'],
         ];
     }
 

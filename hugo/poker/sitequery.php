@@ -269,96 +269,81 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" && !empty($_GET['t'])) {
     $q = $_GET['t'];
     $limit = isset($_GET['limit']) && is_numeric($_GET['limit']) ? (int)$_GET['limit'] : 0;
 
-    // Read and filter log lines
+    // 性能优化：将原 PHP 侧的筛选/排序下推到 SQL，去掉全表 SELECT * 与字符串拼接/explode 往返；
+    // 输出字段（id + json 展开）与分支语义保持不变。
+    $db = new SQLite3($db_name, SQLITE3_OPEN_CREATE | SQLITE3_OPEN_READWRITE);
+    $db->enableExceptions(true);
+
+    // 构造 LIKE 条件（与原 queryDBAllColumn 一致：对所有列模糊匹配）
+    $likeWhere = '';
+    $likeParams = [];
     if ($q !== "all") {
-        $lines = queryDBAllColumn($db_name, $table_name, $q);
-    } else {
-        $SQL = "";
-        $lines = queryDB2Array($db_name, $table_name, $SQL);
-    }
-
-    $filteredLines = [];
-
-    foreach ($lines as $lineKey => $lineValue) {
-        $rowData = '';
-        foreach ($site_columns as $column) {
-            $rowData .= $lineValue[$column] . '|';
-        }
-        $filteredLines[] = rtrim($rowData, '|') . PHP_EOL;
-    }
-
-    $filteredLines = array_values($filteredLines);
-
-    // NON-LIMITED BRANCH: Return ALL matching "done" entries
-    if ($limit == 0 || count($filteredLines) <= $limit) {
-        $output = [];
-        foreach ($filteredLines as $line) {
-            $parts = explode('|', $line);
-            if (count($parts) < 2) continue;
-            $jsondata = end($parts);
-            $siteData = json_decode($jsondata, true);
-            if (json_last_error() !== JSON_ERROR_NONE) continue;
-            if (isset($siteData['status']) && $siteData['status'] === "done") {
-                $output[] = array('id' => $parts[0]) + $siteData;
+        $cols = [];
+        $res = $db->query("PRAGMA table_info($table_name)");
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) $cols[] = $row['name'];
+        if (!empty($cols)) {
+            $whereParts = [];
+            foreach ($cols as $i => $col) {
+                $whereParts[] = '"' . $col . '" LIKE :p' . $i;
+                $likeParams[':p' . $i] = '%' . $q . '%';
             }
+            $likeWhere = implode(' OR ', $whereParts);
+        }
+    }
+
+    // 与原逻辑一致：先统计全部匹配行数（含非 done），决定走全量还是 limit 分支
+    // 优化：limit==0（默认调用）必然走全量分支，跳过 COUNT 避免二次全表扫描
+    if ($limit > 0) {
+        $countSql = 'SELECT COUNT(*) AS n FROM "' . $table_name . '"' . ($likeWhere !== '' ? ' WHERE ' . $likeWhere : '');
+        $stmt = $db->prepare($countSql);
+        foreach ($likeParams as $k => $v) $stmt->bindValue($k, $v, SQLITE3_TEXT);
+        $total = (int)$stmt->execute()->fetchArray(SQLITE3_ASSOC)['n'];
+    } else {
+        $total = 0;
+    }
+
+    $doneCond = 'json_extract("json", \'$.status\') = \'done\'';
+
+    // NON-LIMITED BRANCH: Return ALL matching "done" entries（行序与原 SELECT * 全表扫描一致）
+    if ($limit == 0 || $total <= $limit) {
+        $sql = 'SELECT "ctx_id", "json" FROM "' . $table_name . '"'
+             . ($likeWhere !== '' ? ' WHERE (' . $likeWhere . ') AND ' : ' WHERE ') . $doneCond;
+        $stmt = $db->prepare($sql);
+        foreach ($likeParams as $k => $v) $stmt->bindValue($k, $v, SQLITE3_TEXT);
+        $res = $stmt->execute();
+
+        $output = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $siteData = json_decode($row['json'], true);
+            if (json_last_error() !== JSON_ERROR_NONE) continue;
+            $output[] = array('id' => $row['ctx_id']) + $siteData;
         }
         $response = $output;
     }
     // LIMITED BRANCH: Return UP TO $limit "done" entries, prioritize domains with smallest count in sitetopic
     else {
-        // Filter lines to ONLY "done" status entries
-        $candidateLines = [];
-        foreach ($filteredLines as $line) {
-            $parts = explode('|', $line);
-            if (count($parts) < 2) continue;
-            $jsondata = end($parts);
-            $siteData = json_decode($jsondata, true);
-            if (json_last_error() !== JSON_ERROR_NONE) continue;
-            if (isset($siteData['status']) && $siteData['status'] === "done") {
-                $candidateLines[] = $line;
-            }
-        }
+        $aliasWhere = $likeWhere !== '' ? preg_replace('/"(\w+)" LIKE/', 's."$1" LIKE', $likeWhere) : '1';
+        $sql = 'SELECT s."ctx_id", s."json" FROM "' . $table_name . '" s'
+             . ' LEFT JOIN (SELECT "domain", COUNT(*) AS cnt FROM "sitetopic" GROUP BY "domain") c ON c."domain" = s."domain"'
+             . ' WHERE ' . $aliasWhere . ' AND ' . $doneCond
+             . ' ORDER BY COALESCE(c.cnt, 0) ASC, RANDOM()'
+             . ' LIMIT ' . (int)$limit;
+        $stmt = $db->prepare($sql);
+        foreach ($likeParams as $k => $v) $stmt->bindValue($k, $v, SQLITE3_TEXT);
+        $res = $stmt->execute();
 
-        // Get domain count map from sitetopic table
-        $domainCountMap = getDomainCountMap($db_name);
-
-        // Sort candidate lines by domain count (ascending), then randomly
-        usort($candidateLines, function($a, $b) use ($domainCountMap) {
-            $partsA = explode('|', $a);
-            $partsB = explode('|', $b);
-
-            // domain is the 6th column (index 5) in site_columns
-            $domainA = isset($partsA[5]) ? $partsA[5] : '';
-            $domainB = isset($partsB[5]) ? $partsB[5] : '';
-
-            $countA = isset($domainCountMap[$domainA]) ? $domainCountMap[$domainA] : 0;
-            $countB = isset($domainCountMap[$domainB]) ? $domainCountMap[$domainB] : 0;
-
-            // Primary sort: by domain count (ascending)
-            if ($countA !== $countB) {
-                return $countA - $countB;
-            }
-
-            // Secondary sort: random order when counts are equal
-            return rand(-1, 1);
-        });
-
-        // Select top $limit entries
-        $selectedLines = array_slice($candidateLines, 0, $limit);
-
-        // Build response
         $output = [];
-        foreach ($selectedLines as $line) {
-            $parts = explode('|', $line);
-            $jsondata = end($parts);
-            $siteData = json_decode($jsondata, true);
-            $output[] = array('id' => $parts[0]) + $siteData;
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $siteData = json_decode($row['json'], true);
+            if (json_last_error() !== JSON_ERROR_NONE) continue;
+            $output[] = array('id' => $row['ctx_id']) + $siteData;
         }
-
         $response = $output;
     }
 
-    // Output JSON response
+    $db->close();
+
+    // Output JSON response（格式与原逻辑一致）
     if (!empty($response)) {
         header('Content-Type: application/json');
         echo json_encode($response);

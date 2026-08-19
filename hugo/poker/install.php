@@ -99,6 +99,15 @@ function businessTables()
             "hostip" VARCHAR, "local_deploy" VARCHAR, "local_hostip" VARCHAR,
             "status" VARCHAR, "json" VARCHAR, "time" DATETIME,
             PRIMARY KEY("id" AUTOINCREMENT))',
+        'article' => 'CREATE TABLE IF NOT EXISTS "article" (
+            "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            "ctx_id" VARCHAR UNIQUE NOT NULL,
+            "url" VARCHAR, "title" VARCHAR, "keyword" VARCHAR, "tags" VARCHAR,
+            "description" VARCHAR, "static_thumbnail" VARCHAR, "iframesrc" VARCHAR,
+            "lang" VARCHAR, "series" VARCHAR, "pubdir" VARCHAR, "savename" VARCHAR,
+            "globalpublish" VARCHAR, "pubdomain" VARCHAR, "translate_to_langs" VARCHAR,
+            "content" TEXT, "json" TEXT, "json_file" VARCHAR,
+            "time" DATETIME, "update_date" DATETIME)',
     ];
 }
 
@@ -127,6 +136,12 @@ function expectedColumns()
         'keywordmonitorlist' => [
             'id', 'ctx_id', 'git_name', 'keyword', 'pubdir', 'status',
             'lang', 'geo', 'lasttask', 'json', 'time',
+        ],
+        'article' => [
+            'id', 'ctx_id', 'url', 'title', 'keyword', 'tags', 'description',
+            'static_thumbnail', 'iframesrc', 'lang', 'series', 'pubdir',
+            'savename', 'globalpublish', 'pubdomain', 'translate_to_langs',
+            'content', 'json', 'json_file', 'time', 'update_date',
         ],
     ];
 }

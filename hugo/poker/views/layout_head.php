@@ -10,6 +10,9 @@
   <link rel="stylesheet" href="css/bootstrap-select.min.css" />
   <link rel="stylesheet" href="css/bootstrap-table.min.css">
   <link rel="stylesheet" href="css/theme.css">
+  <?php if (!empty($extra_head)): ?>
+  <?php echo $extra_head; ?>
+  <?php endif; ?>
 </head>
 <body>
 <?php if (empty($no_shell)): ?>

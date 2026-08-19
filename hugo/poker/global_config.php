@@ -8,6 +8,11 @@ return [
         'database' => 'sitedata.sqlite',
         'imgbb_api_key' => [
             '9fc1b0414d6169d761763120e0b33038',
+            '2b3203a4aacf4c6927e4a9689d471b8a',
+            'd33c0e89e302966a26575933770e33ae',
+            'a54b7c1b78bb518448362a58e8ad6b9c',
+            '3cbd619915a2a66dad22488691a1468d',
+            'ff808c1643a3566fe6f9e6c506aa70f3',
         ],
         // 静态 API CSRF token：curl/脚本调用时可携带 csrf_token=xxx（POST 字段或 X-CSRF-Token 头）绕过浏览器 cookie 校验。
         // 未配置（留空/注释）时所有入口维持原有行为；配置后所有入口（含页面与任务脚本）要求有效 token 或已登录会话（git 服务器 IP 白名单除外）。
@@ -67,6 +72,27 @@ return [
         'ms-MY' => 'ms',
         'id-ID' => 'id',
         'en-IN' => 'en'
+    ],
+    'translateto' => [
+        'en' => '🇺🇸 en (English)',
+        'ja' => '🇯🇵 ja (日本語)',
+        'zh' => '🇨🇳 zh (简体中文)',
+        'tw' => '🇹🇼 tw (繁體中文)',
+        'hk' => '🇭🇰 hk (香港中文)',
+        'es' => '🇪🇸 es (Español)',
+        'ko' => '🇰🇷 ko (한국어)',
+        'ar' => '🇸🇦 ar (العربية)',
+        'ru' => '🇷🇺 ru (Русский)',
+        'fr' => '🇫🇷 fr (Français)',
+        'mx' => '🇲🇽 mx (Es - México)',
+        'br' => '🇧🇷 br (Pt - Brasil)',
+        'bn' => '🇧🇩 bn (বাংলা)',
+        'ur' => '🇵🇰 ur (اردو)',
+        'de' => '🇩🇪 de (Deutsch)',
+        'sv' => '🇸🇪 sv (Svenska)',
+        'vi' => '🇻🇳 vi (Tiếng Việt)',
+        'tr' => '🇹🇷 tr (Türkçe)',
+        'th' => '🇹🇭 th (ไทย)',
     ],
     'countries' => [
         'en-US' => 'US',

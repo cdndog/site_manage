@@ -51,6 +51,57 @@ class ImgBBService
         return $lastError;
     }
 
+    public static function uploadBytes($bytes, $name = 'image')
+    {
+        if (!is_string($bytes) || $bytes === '') {
+            return self::error('image data empty');
+        }
+        if (strlen($bytes) > self::MAX_BYTES) {
+            return self::error('image too large (max 10MB)');
+        }
+        $keys = Config::imgbbKeys();
+        if (count($keys) === 0) {
+            return self::error('imgbb api key not configured');
+        }
+        $lastError = self::error('imgbb rejected upload');
+        foreach (Config::imgbbRotationKeys() as $key) {
+            $attempt = self::attemptUploadBytes($key, $bytes, $name);
+            if ($attempt['success'] === true) {
+                return $attempt;
+            }
+            $lastError = $attempt;
+        }
+        return $lastError;
+    }
+
+    private static function attemptUploadBytes($key, $bytes, $name)
+    {
+        $curl = curl_init(Config::imgbbUploadUrl());
+        curl_setopt($curl, CURLOPT_POST, true);
+        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($curl, CURLOPT_TIMEOUT, 60);
+        curl_setopt($curl, CURLOPT_POSTFIELDS, [
+            'key' => $key,
+            'image' => base64_encode($bytes),
+            'name' => $name,
+        ]);
+        $response = curl_exec($curl);
+        $errno = curl_errno($curl);
+        $error = curl_error($curl);
+        if ($errno !== 0) {
+            return self::error('imgbb request failed: ' . $error);
+        }
+        $decoded = json_decode((string)$response, true);
+        if (!is_array($decoded) || !isset($decoded['success']) || $decoded['success'] !== true) {
+            $message = isset($decoded['error']['message']) ? $decoded['error']['message'] : 'imgbb rejected upload';
+            return self::error($message);
+        }
+        return [
+            'success' => true,
+            'data' => ['url' => isset($decoded['data']['url']) ? $decoded['data']['url'] : ''],
+        ];
+    }
+
     private static function attemptUpload($key, array $file, $mime, $name)
     {
         $curl = curl_init(Config::imgbbUploadUrl());

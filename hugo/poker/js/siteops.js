@@ -41,6 +41,7 @@ $(document).ready(function() {
 
     // 3. Handle paste from clipboard (global listener)
     $(document).on('paste', function(e) {
+        if (!imgInput.length) return;
         const items = (e.clipboardData || e.originalEvent.clipboardData).items;
         if (!items) return;
 

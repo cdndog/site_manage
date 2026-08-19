@@ -373,6 +373,7 @@ body[data-sidebar-size="collapsed"] .sops-sidebar-link::before { display: none; 
 .badge-info { color: var(--sops-indigo); background-color: rgba(111, 106, 248, .12); }
 .badge-success { color: var(--sops-accent); background-color: rgba(34, 183, 131, .12); }
 .badge-primary { color: var(--sops-primary); }
+.badge-danger { color: #b3373f; background-color: rgba(220, 53, 69, .12); }
 
 /* ---------- 提示条 ---------- */
 .alert { border: 1px solid var(--sops-border); border-radius: var(--sops-radius); }

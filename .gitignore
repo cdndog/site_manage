@@ -5,9 +5,6 @@ vendor/
 /hugo/autobot/json
 **/sitedata.sqlite
 **/aigc_status.json
-**/.agents
-**/.claude
-**/skills-lock.json
 **/autobot
 /hugo/poker/demo_dashboard
 /hugo/poker/sitebulkops
@@ -15,6 +12,5 @@ vendor/
 hugo/poker/keyword_monitor_list.txt
 hugo/poker/siteops_setting.txt
 hugo/poker/siteops_submit.log
-/hugo/poker/tests
 /hugo/poker/topicmonitor
 hugo/poker/topic_monitor_list.txt
