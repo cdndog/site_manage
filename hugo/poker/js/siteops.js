@@ -1,3 +1,5 @@
+/* 全局 Toast/确认提示组件已移至 js/sops-toast.js（由 layout_tail.php 统一引入） */
+
 (function () {
     // 侧边栏折叠（点按钮切换 body[data-sidebar-size]，仅图标态）
     const toggle = document.getElementById('sidebarToggle');
@@ -78,19 +80,20 @@ $(document).ready(function() {
                 result = null;
             }
             if (!result) {
-                alert('上传失败: 服务器返回异常 (HTTP ' + status + (text ? '): ' + text.replace(/\s+/g, ' ').trim().slice(0, 200) : ')'));
+                var extra = text ? '): ' + text.replace(/\s+/g, ' ').trim().slice(0, 200) : ')';
+                sopsToast('上传失败: 服务器返回异常 (HTTP ' + status + extra, 'danger');
                 return;
             }
             if (result.success) {
                 imgInput.val(result.data.url);
                 imgInput.trigger('input');
             } else {
-                alert('上传失败: ' + (result.error && result.error.message || '未知错误'));
+                sopsToast('上传失败: ' + (result.error && result.error.message || '未知错误'), 'danger');
             }
         })
         .catch(error => {
             console.error('Upload error:', error);
-            alert('上传过程中出错，请重试。 (' + error.message + ')');
+            sopsToast('上传过程中出错，请重试。 (' + error.message + ')', 'danger');
         })
         .finally(() => {
             uploadBtn.prop('disabled', false).html('<i class="fas fa-upload me-1"></i>上传');

@@ -4,6 +4,7 @@ namespace App\Repositories;
 
 use App\Database;
 use App\Services\SiteService;
+use App\Support\Cache;
 
 class SiteRepository
 {
@@ -21,7 +22,11 @@ class SiteRepository
         $statement = $db->prepare('DELETE FROM "siteops" WHERE "ctx_id" = :ctx_id');
         $statement->bindValue(':ctx_id', (string)$ctxId);
         $statement->execute();
-        return $db->changes() > 0;
+        $deleted = $db->changes() > 0;
+        if ($deleted) {
+            Cache::forget('site:all');
+        }
+        return $deleted;
     }
 
     public static function upsertByDomain(array $site)
@@ -76,12 +81,15 @@ class SiteRepository
             $db->exec('ROLLBACK');
             throw $e;
         }
+        Cache::forget('site:all');
         return $result;
     }
 
     public static function all()
     {
-        return Database::fetchAll('SELECT * FROM "siteops" WHERE "*" = "*"');
+        return Cache::remember('site:all', 30, function () {
+            return Database::fetchAll('SELECT * FROM "siteops" WHERE "*" = "*"');
+        });
     }
 
     const SORTABLE = ['id', 'ctx_id', 'git_name', 'git_account', 'status', 'theme_type', 'languages', 'domain', 'site_title', 'site_subtitle'];

@@ -1,2 +1,4 @@
 tests/tmp/
 var/
+*.sqlite-wal
+*.sqlite-shm

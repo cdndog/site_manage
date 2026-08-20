@@ -72,10 +72,10 @@
                   window.location.reload();
                 }
               } else {
-                window.alert((resp && resp.rows && resp.rows[0] && resp.rows[0].message) ? resp.rows[0].message : '删除失败');
+                sopsToast((resp && resp.rows && resp.rows[0] && resp.rows[0].message) ? resp.rows[0].message : '删除失败', 'danger');
               }
             } else {
-              window.alert('删除失败 (HTTP ' + xhr.status + ')');
+              sopsToast('删除失败 (HTTP ' + xhr.status + ')', 'danger');
             }
           }
         };
@@ -112,13 +112,13 @@
                 { field: 'lasttask', title: '发布时间', sortable: true },
                 { field: 'lang', title: '语言', sortable: true },
                 { field: 'geo', title: '区域', sortable: true },
-                { field: 'ctx_id', title: '操作', class: 'op-col', width: 150, align: 'center', formatter: topicEditer }
+                { field: '_op', title: '操作', class: 'op-col', width: 150, align: 'center', formatter: topicEditer }
               ],
               search: true,
               showToggle: true,
               showColumns: true,
               showRefresh: true,
-              sortName: 'id',
+              sortName: 'ctx_id',
               sortOrder: 'desc',
               pagination: true,
               pageSize: 20,

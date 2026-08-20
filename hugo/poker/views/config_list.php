@@ -2,7 +2,7 @@
   <div class="card card-sops">
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
       <h1 class="h5 mb-0 page-title"><i class="bi bi-sliders mr-2" aria-hidden="true"></i>配置管理</h1>
-      <form method="post" action="config_list.php" class="d-inline" id="config_import_form" onsubmit="return confirm('将用 global_config 中的字典配置覆盖数据库，确定导入？');">
+      <form method="post" action="config_list.php" class="d-inline" id="config_import_form" data-sops-confirm="将用 global_config 中的字典配置覆盖数据库，确定导入？">
         <input type="hidden" name="csrf_token" value="<?php echo e($csrf_token); ?>">
         <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download mr-1" aria-hidden="true"></i>从 global_config 导入</button>
       </form>

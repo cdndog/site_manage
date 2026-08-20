@@ -290,8 +290,8 @@
                 // Prevent form submission
                 event.preventDefault();
 
-                // Display an alert with the label value
-                alert('请填写必填字段：' + labelText);
+                // Display a toast with the label value
+                sopsToast('请填写必填字段：' + labelText, 'warning');
 
                 // Optionally, you can focus on the empty input field
                 input.focus();
@@ -312,8 +312,8 @@
             // Prevent form submission
             event.preventDefault();
 
-            // Display an alert with the label value
-            alert('请填写必填字段：' + labelText);
+            // Display a toast with the label value
+            sopsToast('请填写必填字段：' + labelText, 'warning');
 
             // Optionally, you can focus on the empty textarea
             textarea.focus();

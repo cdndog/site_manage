@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Config;
+use App\Repositories\ArticleRepository;
 
 class ArticleService
 {
@@ -130,6 +131,138 @@ class ArticleService
         return 'json/' . $ctxId . '.json';
     }
 
+    public static function importFromLogFile($logFile)
+    {
+        $result = [
+            'file' => (string)$logFile,
+            'imported' => 0,
+            'skipped' => 0,
+            'missing' => 0,
+            'failed' => 0,
+            'rows' => [],
+        ];
+        if (!is_file($logFile) || !is_readable($logFile)) {
+            $result['error'] = '日志文件不存在或不可读：' . $logFile;
+            return $result;
+        }
+        $lines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $parts = explode('|', $line, 3);
+            if (count($parts) !== 3) {
+                $result['failed']++;
+                $result['rows'][] = ['ok' => false, 'message' => '无效行（非 ctx_id|url|json 格式）', 'ctx_id' => ''];
+                continue;
+            }
+            $ctxId = trim($parts[0]);
+            $lineUrl = trim($parts[1]);
+            $third = trim($parts[2]);
+            $json = null;
+            if ($third !== '' && $third[0] === '{') {
+                $json = json_decode($third, true);
+                if (!is_array($json)) {
+                    $result['failed']++;
+                    $result['rows'][] = ['ok' => false, 'message' => 'JSON 解析失败', 'ctx_id' => $ctxId];
+                    continue;
+                }
+            } else {
+                $file = self::resolveJsonFile($third);
+                if ($file === null) {
+                    $result['missing']++;
+                    $result['rows'][] = ['ok' => false, 'missing' => true, 'message' => 'JSON 文件缺失，跳过', 'ctx_id' => $ctxId];
+                    continue;
+                }
+                $json = json_decode((string)file_get_contents($file), true);
+                if (!is_array($json)) {
+                    $result['failed']++;
+                    $result['rows'][] = ['ok' => false, 'message' => 'JSON 文件解析失败', 'ctx_id' => $ctxId];
+                    continue;
+                }
+            }
+            if (empty($json['post_uuid'])) {
+                $json['post_uuid'] = $ctxId;
+            }
+            $json['post_uuid'] = $ctxId;
+            if ($lineUrl !== '') {
+                $json['url'] = $lineUrl;
+            }
+            $json = self::restoreFromJsonFiles($ctxId, $json);
+            $json['post_uuid'] = $ctxId;
+            if (ArticleRepository::byCtxId($ctxId) !== null) {
+                $result['skipped']++;
+                $result['rows'][] = ['ok' => false, 'skipped' => true, 'message' => '已存在，跳过', 'ctx_id' => $ctxId, 'title' => isset($json['title']['text'][0]) ? (string)$json['title']['text'][0] : ''];
+                continue;
+            }
+            $record = self::toRecord([], $json);
+            $localFile = self::jsonDir() . '/' . $ctxId . '.json';
+            if (!is_file($localFile)) {
+                $dir = self::jsonDir();
+                if (!is_dir($dir)) {
+                    @mkdir($dir, 0755, true);
+                }
+                file_put_contents($localFile, json_encode($json, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+            $record['json_file'] = self::jsonFileName($ctxId);
+            ArticleRepository::upsertByCtxId($record);
+            self::saveSeoData($json);
+            $result['imported']++;
+            $result['rows'][] = ['ok' => true, 'message' => '已导入', 'ctx_id' => $ctxId, 'title' => $record['title']];
+        }
+        return $result;
+    }
+
+    private static function resolveJsonFile($path)
+    {
+        $path = trim($path);
+        if ($path === '') {
+            return null;
+        }
+        if (is_file($path)) {
+            return $path;
+        }
+        $candidates = [
+            APP_PATH . '/' . $path,
+            APP_PATH . '/pokerjson/' . basename($path),
+            self::jsonDir() . '/' . basename($path),
+        ];
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate)) {
+                return $candidate;
+            }
+        }
+        return null;
+    }
+
+    private static function restoreFromJsonFiles($ctxId, array $json)
+    {
+        $candidates = [
+            self::jsonDir() . '/' . $ctxId . '.json',
+            Config::dataDir() . '/seodata/json/' . $ctxId . '.json',
+        ];
+        foreach ($candidates as $file) {
+            if (!is_file($file)) {
+                continue;
+            }
+            $disk = json_decode((string)file_get_contents($file), true);
+            if (!is_array($disk)) {
+                continue;
+            }
+            foreach ($json as $key => $value) {
+                if (!isset($disk[$key]) || $disk[$key] === '' || $disk[$key] === [] || $disk[$key] === null) {
+                    $disk[$key] = $value;
+                }
+            }
+            if (empty($disk['post_uuid'])) {
+                $disk['post_uuid'] = $ctxId;
+            }
+            return $disk;
+        }
+        return $json;
+    }
+
     public static function saveJsonFile(array $json)
     {
         $ctxId = isset($json['post_uuid']) ? $json['post_uuid'] : '';
@@ -195,13 +328,36 @@ class ArticleService
         $seoCommonFileName = (string)Config::baseKey('seoCommonFileName', 'seocommon_poker_article_original.json');
         $siteConfigServerURL = (string)Config::baseKey('siteConfigServerURL', 'https://wptg.wptdata.com');
 
-        $server = rtrim($siteConfigServerURL, '/') . '/hugo/keywordpost.php';
-        $messages[] = $lang . '_' . $seoCommonFileName . ' -> yes';
-        $res = self::uploadKeywordData($server, $lang . '_' . $seoCommonFileName, json_encode([$json]), 'url');
-        $messages[] = (string)$res;
+        $messages = array_merge($messages, self::saveSeoData($json));
+
+        // $server = rtrim($siteConfigServerURL, '/') . '/hugo/keywordpost.php';
+        // $messages[] = $lang . '_' . $seoCommonFileName . ' -> yes';
+        // $res = self::uploadKeywordData($server, $lang . '_' . $seoCommonFileName, json_encode([$json]), 'url');
+        // $messages[] = (string)$res;
+
+        return $messages;
+    }
+
+    public static function saveSeoData(array $json)
+    {
+        $messages = [];
+        $ctxId = isset($json['post_uuid']) ? (string)$json['post_uuid'] : '';
+        if ($ctxId !== '') {
+            $seoDataDir = Config::dataDir() . '/seodata';
+            if (!is_dir($seoDataDir)) {
+                @mkdir($seoDataDir, 0755, true);
+            }
+            $seoJsonDir = $seoDataDir . '/json';
+            if (!is_dir($seoJsonDir)) {
+                @mkdir($seoJsonDir, 0755, true);
+            }
+            $seoJsonFile = $seoJsonDir . '/' . $ctxId . '.json';
+            file_put_contents($seoJsonFile, json_encode([$json], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            $messages[] = 'seodata/json/' . $ctxId . '.json saved.';
+        }
 
         if (!empty($json['pubdomain'])) {
-            $indexFile = 'aigc_status.json';
+            $indexFile = 'seodata/aigc_status.json';
             $res = self::localSaveAigcStatus($indexFile, [$json]);
             $messages[] = $indexFile . ' -> ' . implode(',', $json['pubdomain']) . ' (' . $res . ')';
         }
@@ -242,6 +398,10 @@ class ArticleService
             }
         }
         $localJson = $dataDir . '/' . $name;
+        $dir = dirname($localJson);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
         if (file_exists($localJson)) {
             $oldJson = json_decode((string)file_get_contents($localJson), true);
             if (is_array($oldJson)) {

@@ -129,6 +129,10 @@ class ArticleController
             self::handleArticleDelete();
             return;
         }
+        if ($method === 'POST' && isset($_POST['action']) && $_POST['action'] === 'import-log') {
+            self::handleLogImport();
+            return;
+        }
         $data = self::listData();
         if ($data === null) {
             return;
@@ -169,6 +173,48 @@ class ArticleController
         self::emitJson(['total' => 1, 'rows' => [['ok' => true, 'message' => 'deleted']]]);
     }
 
+    private static function handleLogImport()
+    {
+        Security::requirePermission('article.manage');
+        if (!Security::csrfVerify(Security::requestToken())) {
+            self::emitJson(['total' => 1, 'rows' => [['ok' => false, 'message' => 'CSRF token invalid']]]);
+            return;
+        }
+        $logFiles = Config::baseKey('log_files', null);
+        if (!is_array($logFiles) || $logFiles === []) {
+            $logFiles = [(string)Config::baseKey('log_file', 'editor_poker_allpost_list.txt')];
+        }
+        $results = [];
+        foreach ($logFiles as $logFile) {
+            $results[] = ArticleService::importFromLogFile(APP_PATH . '/' . ltrim((string)$logFile, '/'));
+        }
+        $firstError = null;
+        foreach ($results as $result) {
+            if (isset($result['error'])) {
+                $firstError = $result['error'];
+                break;
+            }
+        }
+        if ($firstError !== null) {
+            self::emitJson(['total' => 1, 'rows' => [['ok' => false, 'message' => $firstError]]]);
+            return;
+        }
+        $imported = 0;
+        $skipped = 0;
+        $missing = 0;
+        $failed = 0;
+        $rows = [];
+        foreach ($results as $result) {
+            $imported += $result['imported'];
+            $skipped += $result['skipped'];
+            $missing += $result['missing'];
+            $failed += $result['failed'];
+            $rows = array_merge($rows, $result['rows']);
+        }
+        $summary = '导入完成：文件 ' . count($results) . ' 个，新增 ' . $imported . ' 条，已存在跳过 ' . $skipped . ' 条，JSON 缺失跳过 ' . $missing . ' 条，失败 ' . $failed . ' 条';
+        self::emitJson(['total' => count($rows), 'rows' => array_merge([['ok' => true, 'message' => $summary]], $rows)]);
+    }
+
     private static function listData()
     {
         list($page, $perPage) = self::pageParams();
@@ -187,7 +233,25 @@ class ArticleController
             'per_page' => $perPage,
             'search' => $search,
             'csrf_token' => Security::csrfToken(),
+            'can_manage' => Security::can('article.manage'),
+            'log_files' => self::logFileList(),
         ];
+    }
+
+    private static function logFileList()
+    {
+        $logFiles = Config::baseKey('log_files', null);
+        if (!is_array($logFiles) || $logFiles === []) {
+            $logFiles = [(string)Config::baseKey('log_file', 'editor_poker_allpost_list.txt')];
+        }
+        $names = [];
+        foreach ($logFiles as $logFile) {
+            $name = (string)$logFile;
+            if ($name !== '') {
+                $names[] = basename($name);
+            }
+        }
+        return $names;
     }
 
     private static function pageParams()

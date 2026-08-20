@@ -92,10 +92,10 @@
                   window.location.reload();
                 }
               } else {
-                window.alert((resp && resp.message) ? resp.message : '删除失败');
+                sopsToast((resp && resp.message) ? resp.message : '删除失败', 'danger');
               }
             } else {
-              window.alert('删除失败 (HTTP ' + xhr.status + ')');
+              sopsToast('删除失败 (HTTP ' + xhr.status + ')', 'danger');
             }
           }
         };

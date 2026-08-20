@@ -14,6 +14,8 @@ class Database
             self::$connection->close();
             self::$connection = null;
         }
+        self::$migrated = false;
+        \App\Support\Cache::reset();
     }
 
     public static function connection()
@@ -21,14 +23,32 @@ class Database
         if (self::$connection === null) {
             $db = new SQLite3(Config::dbFile(), SQLITE3_OPEN_CREATE | SQLITE3_OPEN_READWRITE);
             $db->enableExceptions(true);
+            $db->busyTimeout(5000);
+            $db->exec('PRAGMA journal_mode=WAL');
+            $db->exec('PRAGMA synchronous=NORMAL');
+            $db->exec('PRAGMA cache_size=-8000');
+            $db->exec('PRAGMA temp_store=MEMORY');
             self::$connection = $db;
             self::migrate($db);
         }
         return self::$connection;
     }
 
+    private static $migrated = false;
+
     public static function migrate(\SQLite3 $db)
     {
+        if (self::$migrated) {
+            return;
+        }
+        $usersExists = $db->querySingle('SELECT 1 FROM "sqlite_master" WHERE "type" = \'table\' AND "name" = \'users\'');
+        if ($usersExists) {
+            $userCount = (int)$db->querySingle('SELECT COUNT(*) FROM "users"');
+            if ($userCount > 0) {
+                self::$migrated = true;
+                return;
+            }
+        }
         $db->exec('CREATE TABLE IF NOT EXISTS "users" (
             "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
             "username" VARCHAR UNIQUE NOT NULL,
@@ -70,6 +90,7 @@ class Database
         )');
         self::seed($db);
         self::seedAppConfigs($db);
+        self::$migrated = true;
     }
 
     private static function seed(\SQLite3 $db)

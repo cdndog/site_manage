@@ -4,9 +4,80 @@
       <h1 class="h5 mb-0 page-title"><i class="bi bi-file-earmark-text mr-2" aria-hidden="true"></i>文章列表</h1>
       <div>
         <a class="btn btn-sm btn-outline-secondary" href="article_new.php"><i class="bi bi-plus-circle mr-1" aria-hidden="true"></i>新建文章</a>
+        <?php if (!empty($can_manage)): ?>
+        <button class="btn btn-sm btn-outline-warning" type="button" id="importLogBtn" title="从 global_config.php base.log_file 配置的日志文件导入"><i class="bi bi-cloud-download mr-1" aria-hidden="true"></i>导入日志</button>
+        <?php endif; ?>
       </div>
     </div>
     <div class="card-body">
+    <?php if (!empty($can_manage)): ?>
+    <div class="modal fade" id="articleImportModal" tabindex="-1" role="dialog" aria-labelledby="articleImportModalTitle" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="articleImportModalTitle"><i class="bi bi-cloud-download text-warning mr-1" aria-hidden="true"></i>导入日志</h5>
+            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+              <span aria-hidden="true">&times;</span>
+            </button>
+          </div>
+          <div class="modal-body">
+            <p>将从日志文件（<strong><?php echo e(implode(', ', isset($log_files) ? (array)$log_files : ['editor_poker_allpost_list.txt'])); ?></strong>）导入文章到列表，导入后同步更新 seodata/aigc_status.json 与 seodata/json/。</p>
+            <ul class="mb-0 small text-muted">
+              <li>已存在的记录将跳过；</li>
+              <li>JSON 文件缺失的文章将跳过（不入库）；</li>
+              <li>导入的文章将同步写入 seodata/json/ 并更新 aigc_status.json。</li>
+            </ul>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+            <button type="button" class="btn btn-warning" id="articleImportExecuteBtn"><i class="bi bi-cloud-download mr-1" aria-hidden="true"></i>确定导入</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var importBtn = document.getElementById('importLogBtn');
+        var importModal = document.getElementById('articleImportModal');
+        var executeBtn = document.getElementById('articleImportExecuteBtn');
+        if (!importBtn || !importModal || !executeBtn) { return; }
+        importBtn.addEventListener('click', function () {
+          window.jQuery(importModal).modal('show');
+        });
+        executeBtn.addEventListener('click', function () {
+          executeBtn.disabled = true;
+          executeBtn.innerHTML = '<i class="bi bi-arrow-repeat mr-1" aria-hidden="true"></i>导入中…';
+          var csrf = '<?php echo e(isset($csrf_token) ? $csrf_token : ''); ?>';
+          var xhr = new XMLHttpRequest();
+          xhr.open('POST', 'article_list.php', true);
+          xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+          xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) { return; }
+            executeBtn.disabled = false;
+            executeBtn.innerHTML = '<i class="bi bi-cloud-download mr-1" aria-hidden="true"></i>确定导入';
+            window.jQuery(importModal).modal('hide');
+            var isError = true;
+            var msg = '导入失败（HTTP ' + xhr.status + '）';
+            if (xhr.status === 200) {
+              var resp = null;
+              try { resp = JSON.parse(xhr.responseText); } catch (e) {}
+              if (resp && resp.rows && resp.rows[0]) {
+                msg = resp.rows[0].message || '导入完成';
+                isError = resp.rows[0].ok === false;
+              }
+            }
+            sopsToast(msg, isError ? 'danger' : 'success');
+            if (window.jQuery && window.jQuery.fn && window.jQuery.fn.bootstrapTable && document.getElementById('articleTable')) {
+              jQuery('#articleTable').bootstrapTable('refresh');
+            } else {
+              window.location.reload();
+            }
+          };
+          xhr.send('action=import-log&csrf_token=' + encodeURIComponent(csrf));
+        });
+      })();
+    </script>
+    <?php endif; ?>
 <?php if ($total > 0): ?>
     <table id="articleTable" class="table table-hover table-sm">
       <thead>
@@ -86,10 +157,10 @@
                   window.location.reload();
                 }
               } else {
-                window.alert((resp && resp.rows && resp.rows[0] && resp.rows[0].message) ? resp.rows[0].message : '删除失败');
+                sopsToast((resp && resp.rows && resp.rows[0] && resp.rows[0].message) ? resp.rows[0].message : '删除失败', 'danger');
               }
             } else {
-              window.alert('删除失败 (HTTP ' + xhr.status + ')');
+              sopsToast('删除失败 (HTTP ' + xhr.status + ')', 'danger');
             }
           }
         };
@@ -124,13 +195,13 @@
                 { field: 'keyword', title: '关键词', sortable: true },
                 { field: 'pubdomain', title: '关联站点', sortable: true },
                 { field: 'update_date', title: '更新时间', sortable: true, formatter: articleTimeFormatter },
-                { field: 'ctx_id', title: '操作', class: 'op-col', width: 150, align: 'center', formatter: articleEditer }
+                { field: '_op', title: '操作', class: 'op-col', width: 150, align: 'center', formatter: articleEditer }
               ],
               search: true,
               showToggle: true,
               showColumns: true,
               showRefresh: true,
-              sortName: 'id',
+              sortName: 'ctx_id',
               sortOrder: 'desc',
               pagination: true,
               pageSize: 20,

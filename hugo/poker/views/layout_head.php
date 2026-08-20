@@ -21,6 +21,6 @@
 <script>
 function refreshPicture(el_id) {
     var text_raw = document.getElementById('textarea_'+el_id).value.split("|");
-    if (text_raw[3].length > 0) {document.getElementById('image_'+el_id).src = text_raw[3];} else {alert("picture not found.");}
+    if (text_raw[3].length > 0) {document.getElementById('image_'+el_id).src = text_raw[3];} else {sopsToast("picture not found.", 'warning');}
 }
 </script>

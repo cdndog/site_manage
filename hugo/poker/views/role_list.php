@@ -43,31 +43,30 @@
 </div>
 <script>
   function roleDelete(btn, id, name) {
-    if (!window.confirm('确定删除角色「' + name + '」？关联的用户角色与权限配置将一并移除。')) {
-      return;
-    }
-    var csrf = '';
-    var meta = document.querySelector('meta[name="csrf-token"]');
-    if (meta) { csrf = meta.getAttribute('content'); }
-    var form = document.createElement('form');
-    form.method = 'POST';
-    form.action = 'role_edit.php';
-    var input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'csrf_token';
-    input.value = csrf;
-    form.appendChild(input);
-    var i2 = document.createElement('input');
-    i2.type = 'hidden';
-    i2.name = 'id';
-    i2.value = id;
-    form.appendChild(i2);
-    var i3 = document.createElement('input');
-    i3.type = 'hidden';
-    i3.name = 'action';
-    i3.value = 'delete';
-    form.appendChild(i3);
-    document.body.appendChild(form);
-    form.submit();
+    sopsConfirm('确定删除角色「' + name + '」？关联的用户角色与权限配置将一并移除。', function () {
+      var csrf = '';
+      var meta = document.querySelector('meta[name="csrf-token"]');
+      if (meta) { csrf = meta.getAttribute('content'); }
+      var form = document.createElement('form');
+      form.method = 'POST';
+      form.action = 'role_edit.php';
+      var input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'csrf_token';
+      input.value = csrf;
+      form.appendChild(input);
+      var i2 = document.createElement('input');
+      i2.type = 'hidden';
+      i2.name = 'id';
+      i2.value = id;
+      form.appendChild(i2);
+      var i3 = document.createElement('input');
+      i3.type = 'hidden';
+      i3.name = 'action';
+      i3.value = 'delete';
+      form.appendChild(i3);
+      document.body.appendChild(form);
+      form.submit();
+    });
   }
 </script>

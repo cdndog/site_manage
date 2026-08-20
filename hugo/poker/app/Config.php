@@ -268,6 +268,8 @@ class Config
                     ['title' => '用户管理', 'url' => 'users.php', 'icon' => 'bi-people', 'perm' => 'user.manage'],
                     ['title' => '角色权限', 'url' => 'roles.php', 'icon' => 'bi-shield-check', 'perm' => 'user.manage'],
                     ['title' => '配置管理', 'url' => 'config_list.php', 'icon' => 'bi-sliders', 'perm' => 'config.manage'],
+                    ['title' => '微信cookie配置', 'url' => 'wechat_cookie.php', 'icon' => 'bi-cookie', 'perm' => 'config.manage'],
+                    ['title' => '缓存管理', 'url' => 'cache_manage.php', 'icon' => 'bi-lightning-charge', 'perm' => 'config.manage'],
                 ],
             ],
         ];

@@ -4,11 +4,22 @@ namespace App\Repositories;
 
 use App\Database;
 use App\Services\KeywordService;
+use App\Support\Cache;
 
 class KeywordRepository
 {
+    private static $ensured = false;
+
     public static function ensureTable()
     {
+        if (self::$ensured) {
+            return;
+        }
+        $exists = Database::fetchOne('SELECT 1 FROM "sqlite_master" WHERE "type" = \'table\' AND "name" = \'keywordmonitorlist\'');
+        if ($exists !== null) {
+            self::$ensured = true;
+            return;
+        }
         Database::connection()->exec('CREATE TABLE IF NOT EXISTS "keywordmonitorlist" (
             "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
             "ctx_id" VARCHAR UNIQUE NOT NULL,
@@ -22,6 +33,7 @@ class KeywordRepository
             "json" VARCHAR,
             "time" DATETIME
         )');
+        self::$ensured = true;
     }
 
     public static function byCtxId($ctxId)
@@ -43,7 +55,11 @@ class KeywordRepository
         $statement = $db->prepare('DELETE FROM "keywordmonitorlist" WHERE "ctx_id" = :ctx_id');
         $statement->bindValue(':ctx_id', (string)$ctxId);
         $statement->execute();
-        return $db->changes() > 0;
+        $deleted = $db->changes() > 0;
+        if ($deleted) {
+            Cache::forget('keyword:all');
+        }
+        return $deleted;
     }
 
     public static function upsertByKeyword(array $record)
@@ -108,6 +124,7 @@ class KeywordRepository
             $db->exec('ROLLBACK');
             throw $e;
         }
+        Cache::forget('keyword:all');
         $data['ctx_id'] = isset($data['ctx_id']) ? $data['ctx_id'] : (isset($existing['ctx_id']) ? $existing['ctx_id'] : '');
         return $data;
     }
@@ -124,7 +141,9 @@ class KeywordRepository
     public static function all()
     {
         self::ensureTable();
-        return Database::fetchAll('SELECT * FROM "keywordmonitorlist" ORDER BY "id" DESC');
+        return Cache::remember('keyword:all', 30, function () {
+            return Database::fetchAll('SELECT * FROM "keywordmonitorlist" ORDER BY "id" DESC');
+        });
     }
 
     const SORTABLE = ['id', 'ctx_id', 'keyword', 'status', 'git_name', 'pubdir', 'lang', 'geo', 'lasttask'];

@@ -6,7 +6,7 @@
  *   1. 环境检查（PHP 版本、SQLite3 扩展、目录可写性）
  *   2. 数据库配置：目标数据库文件名（写入 global_config.php base.database）
  *   3. 数据表新建：系统表（users/roles/permissions/...）+ 业务表
- *      （siteops / serverlist / sitetopic / keywordmonitorlist）
+ *      （siteops / serverlist / sitetopic / keywordmonitorlist / article）
  *   4. 数据迁移：检测已有旧库，缺失列自动补列（ALTER TABLE ADD COLUMN），数据保留
  *   5. 可选：创建管理员账号、配置静态 API token（api_csrf_tokens）
  *
@@ -172,6 +172,39 @@ function missingColumns(SQLite3 $db, $table, $expected)
 }
 
 /**
+ * 各表性能索引（迁移时自动补建；与 Repository::ensureTable 保持一致）
+ */
+function expectedIndexes()
+{
+    return [
+        'sitetopic' => [
+            'idx_sitetopic_status'  => 'CREATE INDEX IF NOT EXISTS "idx_sitetopic_status" ON "sitetopic" ("status")',
+            'idx_sitetopic_keyword' => 'CREATE INDEX IF NOT EXISTS "idx_sitetopic_keyword" ON "sitetopic" ("keyword")',
+            'idx_sitetopic_domain'  => 'CREATE INDEX IF NOT EXISTS "idx_sitetopic_domain" ON "sitetopic" ("domain")',
+        ],
+    ];
+}
+
+function missingIndexes(SQLite3 $db, $table, array $indexes)
+{
+    if (!tableExists($db, $table)) {
+        return [];
+    }
+    $result = $db->query("SELECT \"name\" FROM \"sqlite_master\" WHERE \"type\" = 'index' AND \"tbl_name\" = '" . $db->escapeString($table) . "'");
+    $have = [];
+    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+        $have[$row['name']] = true;
+    }
+    $missing = [];
+    foreach ($indexes as $name => $sql) {
+        if (!isset($have[$name])) {
+            $missing[$name] = $sql;
+        }
+    }
+    return $missing;
+}
+
+/**
  * 写入 global_config.php：base.database 与 base.api_csrf_tokens
  */
 function writeConfig($dbName, array $apiTokens)
@@ -255,14 +288,19 @@ function runInstall($dbName, $adminUser, $adminPass, array $apiTokens)
     }
     \App\Repositories\TopicRepository::ensureTable();
     \App\Repositories\KeywordRepository::ensureTable();
+    \App\Repositories\ArticleRepository::ensureTable();
 
     $preSites     = 0;
     $preTopics    = 0;
+    $preArticles  = 0;
     if (tableExists($db, 'siteops')) {
         $preSites = (int)$db->querySingle('SELECT COUNT(*) FROM "siteops"');
     }
     if (tableExists($db, 'sitetopic')) {
         $preTopics = (int)$db->querySingle('SELECT COUNT(*) FROM "sitetopic"');
+    }
+    if (tableExists($db, 'article')) {
+        $preArticles = (int)$db->querySingle('SELECT COUNT(*) FROM "article"');
     }
 
     foreach (expectedColumns() as $table => $columns) {
@@ -278,8 +316,20 @@ function runInstall($dbName, $adminUser, $adminPass, array $apiTokens)
         }
     }
 
-    if ($preSites > 0 || $preTopics > 0) {
-        $notes[] = '检测到已有数据：siteops ' . $preSites . ' 行，sitetopic ' . $preTopics . ' 行，已保留并迁移。';
+    $addedIndexes = [];
+    foreach (expectedIndexes() as $table => $indexes) {
+        if (!tableExists($db, $table)) {
+            continue;
+        }
+        $missing = missingIndexes($db, $table, $indexes);
+        foreach ($missing as $name => $sql) {
+            $db->exec($sql);
+            $addedIndexes[$table][] = $name;
+        }
+    }
+
+    if ($preSites > 0 || $preTopics > 0 || $preArticles > 0) {
+        $notes[] = '检测到已有数据：siteops ' . $preSites . ' 行，sitetopic ' . $preTopics . ' 行，article ' . $preArticles . ' 行，已保留并迁移。';
     }
 
     if ($adminUser !== '' && $adminPass !== '') {
@@ -312,12 +362,13 @@ function runInstall($dbName, $adminUser, $adminPass, array $apiTokens)
         @file_put_contents(APP_PATH . '/install.lock', 'installed at ' . date('Y-m-d H:i:s') . PHP_EOL);
     }
 
-    return [$errors, $notes, $migrated, $dbPath];
+    return [$errors, $notes, $migrated, $dbPath, $addedIndexes];
 }
 
 $errors    = [];
 $notes     = [];
 $migrated  = [];
+$addedIndexes = [];
 $dbPath    = '';
 $wasInstalled = false;
 $installedAt  = is_file($lockFile) ? (string)@file_get_contents($lockFile) : '';
@@ -340,7 +391,7 @@ if ($request === 'POST' && isset($_POST['do']) && $_POST['do'] === 'install') {
                 $apiTokens[] = $t;
             }
         }
-        list($errors, $notes, $migrated, $dbPath) = runInstall($dbName, $adminUser, $adminPass, $apiTokens);
+        list($errors, $notes, $migrated, $dbPath, $addedIndexes) = runInstall($dbName, $adminUser, $adminPass, $apiTokens);
         $wasInstalled = true;
     }
 }
@@ -407,6 +458,11 @@ li { font-size: 14px; margin: 3px 0; }
         <?php if (count($migrated) > 0): ?>
           <div class="alert alert-info" style="margin-top:14px"><strong>迁移补列：</strong>
             <?php foreach ($migrated as $table => $cols) { echo '<br>表 <span class="mono">' . ih($table) . '</span> 新增列：' . ih(implode(', ', $cols)); } ?>
+          </div>
+        <?php endif; ?>
+        <?php if (count($addedIndexes) > 0): ?>
+          <div class="alert alert-info" style="margin-top:14px"><strong>迁移补索引：</strong>
+            <?php foreach ($addedIndexes as $table => $idxs) { echo '<br>表 <span class="mono">' . ih($table) . '</span> 新增索引：' . ih(implode(', ', $idxs)); } ?>
           </div>
         <?php endif; ?>
         <p style="font-size:14px;margin-top:14px">

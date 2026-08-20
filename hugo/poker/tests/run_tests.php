@@ -914,13 +914,94 @@ file_put_contents($cookieTpl, "<?php return ['cookie' => 'wxlogin=xyz789', 'http
 $wc = \App\Config::wechatConfig();
 test('wechat cookie file headers replace', $wc['http_headers'] === ['User-Agent: CustomAgent'] && $wc['cookie'] === 'wxlogin=xyz789');
 unlink($cookieTpl);
-putenv('APP_WECHAT_COOKIE_FILE');
+putenv('APP_WECHAT_COOKIE_FILE=' . $cookieTpl);
 \App\Config::reset();
 $wc = \App\Config::wechatConfig();
 test('wechat missing cookie file falls back', $wc['cookie'] === '' && count($wc['http_headers']) >= 10);
+putenv('APP_WECHAT_COOKIE_FILE');
+\App\Config::reset();
 test('wechat_cookie_php exists in app root', is_file(\App\Config::wechatConfigFile()));
 
-echo "== wechatops: POST save ==\n";
+echo "== wechatops: cookie config manage page ==\n";
+$wcManageFile = $dataDir . '/wechat_cookie_manage.php';
+@unlink($wcManageFile);
+putenv('APP_WECHAT_COOKIE_FILE=' . $wcManageFile);
+\App\Config::reset();
+$html = runRequest([], [], 'GET', [], '/wechat_cookie.php');
+test('cookie manage GET renders form', strpos($html, '微信cookie配置') !== false && strpos($html, 'name="cookie"') !== false && strpos($html, 'name="http_headers"') !== false && strpos($html, 'name="max_retries"') !== false, substr($html, 0, 200));
+test('cookie manage GET no empty alert', preg_match('/<div class="alert alert-success py-2 small">\s*<\/div>/', $html) === 0, substr($html, 0, 200));
+test('cookie manage GET shows effective defaults', strpos($html, 'name="timeout"') !== false && strpos($html, 'value="30"') !== false, substr($html, 0, 200));
+test('cookie manage menu child added', strpos($html, 'wechat_cookie.php') !== false && strpos($html, 'bi-cookie') !== false);
+$html = runRequest([], ['csrf_token' => 'x', 'cookie' => 'wxlogin=newcookie', 'http_headers' => '["User-Agent: CookiePageAgent"]', 'wechat_forwarded_for' => '1.2.3.4', 'proxy' => 'http://127.0.0.1:8080', 'connect_timeout' => '5', 'timeout' => '12', 'max_retries' => '3'], 'POST', [], '/wechat_cookie.php');
+test('cookie manage POST saves with message', strpos($html, '已保存') !== false, substr($html, 0, 200));
+\App\Config::reset();
+$wcSaved = \App\Config::wechatConfig();
+test('cookie manage POST persists config', $wcSaved['cookie'] === 'wxlogin=newcookie' && $wcSaved['http_headers'] === ['User-Agent: CookiePageAgent'] && $wcSaved['wechat_forwarded_for'] === '1.2.3.4' && $wcSaved['proxy'] === 'http://127.0.0.1:8080' && $wcSaved['connect_timeout'] === 5 && $wcSaved['timeout'] === 12 && $wcSaved['max_retries'] === 3, json_encode($wcSaved, JSON_UNESCAPED_UNICODE));
+test('cookie manage writes php file', is_file($wcManageFile) && strpos((string)file_get_contents($wcManageFile), "wxlogin=newcookie") !== false);
+$html = runRequest([], ['csrf_token' => 'x', 'cookie' => 'k', 'http_headers' => 'not-json', 'connect_timeout' => '5', 'timeout' => '12', 'max_retries' => '1'], 'POST', [], '/wechat_cookie.php');
+test('cookie manage rejects bad headers json', strpos($html, '保存失败') !== false && strpos($html, 'http_headers') !== false, substr($html, 0, 200));
+\App\Config::reset();
+test('cookie manage bad headers not saved', \App\Config::wechatConfig()['cookie'] === 'wxlogin=newcookie');
+$html = runRequest([], ['csrf_token' => 'x', 'cookie' => 'k', 'http_headers' => '[]', 'connect_timeout' => 'abc', 'timeout' => '12', 'max_retries' => '1'], 'POST', [], '/wechat_cookie.php');
+test('cookie manage rejects bad timeout', strpos($html, '保存失败') !== false, substr($html, 0, 200));
+$html = runRequest([], ['csrf_token' => 'bad', 'cookie' => 'k', 'http_headers' => '[]', 'connect_timeout' => '5', 'timeout' => '12', 'max_retries' => '1'], 'POST', ['siteops_uid' => 'csrfuser'], '/wechat_cookie.php');
+test('cookie manage bad csrf rejected', strpos($html, 'CSRF') !== false, substr($html, 0, 200));
+@unlink($wcManageFile);
+putenv('APP_WECHAT_COOKIE_FILE');
+\App\Config::reset();
+
+echo "== cache manage page ==\n";
+$cacheCfgFile = APP_PATH . '/cache.config.php';
+@unlink($cacheCfgFile);
+\App\Support\Cache::reset();
+$html = runRequest([], [], 'GET', [], '/cache_manage.php');
+test('cache manage GET renders page', strpos($html, '缓存管理') !== false && strpos($html, 'name="redis_host"') !== false && strpos($html, 'name="redis_port"') !== false, substr($html, 0, 200));
+test('cache manage GET no empty alert', preg_match('/<div class="alert alert-success py-2 small">\s*<\/div>/', $html) === 0, substr($html, 0, 200));
+test('cache manage GET shows file backend', strpos($html, '文件') !== false && strpos($html, '缓存后端') !== false, substr($html, 0, 200));
+test('cache manage menu child added', strpos($html, 'cache_manage.php') !== false && strpos($html, 'bi-lightning-charge') !== false);
+
+$html = runRequest([], ['action' => 'save_config', 'csrf_token' => 'x', 'redis_host' => '127.0.0.1', 'redis_port' => '6390', 'redis_auth' => 'secret123', 'redis_db' => '2', 'redis_timeout' => '1.0'], 'POST', [], '/cache_manage.php');
+test('cache manage POST saves config', strpos($html, '已保存') !== false, substr($html, 0, 200));
+test('cache manage writes config file', is_file($cacheCfgFile) && strpos((string)file_get_contents($cacheCfgFile), "'host' => '127.0.0.1'") !== false && strpos((string)file_get_contents($cacheCfgFile), "'port' => 6390") !== false && strpos((string)file_get_contents($cacheCfgFile), "'auth' => 'secret123'") !== false && strpos((string)file_get_contents($cacheCfgFile), "'db' => 2") !== false);
+\App\Support\Cache::reset();
+$cfgLoaded = is_file($cacheCfgFile) ? (include $cacheCfgFile) : [];
+test('cache manage config file returns array', is_array($cfgLoaded) && $cfgLoaded['host'] === '127.0.0.1' && $cfgLoaded['port'] === 6390 && $cfgLoaded['auth'] === 'secret123' && $cfgLoaded['db'] === 2 && (float)$cfgLoaded['timeout'] === 1.0, json_encode($cfgLoaded, JSON_UNESCAPED_UNICODE));
+
+$html = runRequest([], ['action' => 'save_config', 'csrf_token' => 'x', 'redis_host' => '127.0.0.1', 'redis_port' => 'abc', 'redis_auth' => '', 'redis_db' => '0', 'redis_timeout' => '0.5'], 'POST', [], '/cache_manage.php');
+test('cache manage rejects bad port', strpos($html, '端口') !== false, substr($html, 0, 200));
+
+$html = runRequest([], ['action' => 'save_config', 'csrf_token' => 'x', 'redis_host' => '127.0.0.1', 'redis_port' => '6379', 'redis_auth' => '', 'redis_db' => '99', 'redis_timeout' => '0.5'], 'POST', [], '/cache_manage.php');
+test('cache manage rejects bad db', strpos($html, 'DB') !== false, substr($html, 0, 200));
+
+$html = runRequest([], ['action' => 'save_config', 'csrf_token' => 'bad', 'redis_host' => '', 'redis_port' => '6379', 'redis_auth' => '', 'redis_db' => '0', 'redis_timeout' => '0.5'], 'POST', ['siteops_uid' => 'csrfuser'], '/cache_manage.php');
+test('cache manage bad csrf rejected', strpos($html, 'CSRF') !== false, substr($html, 0, 200));
+
+$html = runRequest([], ['action' => 'save_config', 'csrf_token' => 'x', 'redis_host' => '', 'redis_port' => '6379', 'redis_auth' => '', 'redis_db' => '0', 'redis_timeout' => '0.5'], 'POST', [], '/cache_manage.php');
+test('cache manage empty host clears config', strpos($html, '回退到文件缓存') !== false, substr($html, 0, 200));
+
+\App\Support\Cache::set('test:flush', 'value1', 60);
+test('cache flushAll pre-check', \App\Support\Cache::get('test:flush') === 'value1');
+$html = runRequest([], ['action' => 'flush', 'csrf_token' => 'x'], 'POST', [], '/cache_manage.php');
+test('cache flush POST shows message', strpos($html, '缓存已清空') !== false, substr($html, 0, 200));
+test('cache flushAll cleared entry', \App\Support\Cache::get('test:flush') === null);
+
+$html = runRequest([], ['action' => 'flush', 'csrf_token' => 'bad'], 'POST', ['siteops_uid' => 'csrfuser'], '/cache_manage.php');
+test('cache flush bad csrf rejected', strpos($html, 'CSRF') !== false, substr($html, 0, 200));
+
+@unlink($cacheCfgFile);
+\App\Support\Cache::reset();
+
+echo "== cache layer unit ==\n";
+\App\Support\Cache::forget('unit:test');
+test('cache get miss returns null', \App\Support\Cache::get('unit:test') === null);
+\App\Support\Cache::set('unit:test', ['data' => 42], 60);
+test('cache set+get roundtrip', \App\Support\Cache::get('unit:test')['data'] === 42);
+$calls = 0;
+$v1 = \App\Support\Cache::remember('unit:remember', 60, function () use (&$calls) { $calls++; return 'computed'; });
+$v2 = \App\Support\Cache::remember('unit:remember', 60, function () use (&$calls) { $calls++; return 'computed'; });
+test('cache remember computes once', $v1 === 'computed' && $v2 === 'computed' && $calls === 1, "calls=$calls");
+\App\Support\Cache::forget('unit:remember');
+\App\Support\Cache::forget('unit:test');
 $wxCtx = $ts10 . '99wximport0';
 $html = runRequest([], [
     'post_uuid' => $wxCtx,
@@ -1053,12 +1134,19 @@ $html = runRequest([], [
     'setupNum' => 'ckeditorFormated',
 ], 'POST', [], '/article_new.php');
 test('article publish confirm shows message', strpos($html, '发布任务已触发') !== false, substr($html, 0, 300));
-$astatus = $dataDir . '/aigc_status.json';
-test('article publish writes aigc_status.json', file_exists($astatus), '');
+$astatus = $dataDir . '/seodata/aigc_status.json';
+test('article publish writes seodata/aigc_status.json', file_exists($astatus), '');
 if (file_exists($astatus)) {
     $astatusJson = json_decode((string)file_get_contents($astatus), true);
     test('article aigc_status entry format', is_array($astatusJson) && isset($astatusJson[0]['ctx_id']) && $astatusJson[0]['ctx_id'] === $pubCtx && isset($astatusJson[0]['keyword']) && $astatusJson[0]['keyword'] === 'Publishable Article' && isset($astatusJson[0]['lang']) && $astatusJson[0]['lang'] === 'en' && isset($astatusJson[0]['pubdomain']) && $astatusJson[0]['pubdomain'] === 'testpoker.com' && isset($astatusJson[0]['createAt']) && isset($astatusJson[0]['publishAt']), substr((string)file_get_contents($astatus), 0, 200));
     unlink($astatus);
+}
+$seoJsonFile = $dataDir . '/seodata/json/' . $pubCtx . '.json';
+test('article publish writes seodata/json/{uuid}.json', file_exists($seoJsonFile), $seoJsonFile);
+if (file_exists($seoJsonFile)) {
+    $seoJson = json_decode((string)file_get_contents($seoJsonFile), true);
+    test('article seodata json is list of one record', is_array($seoJson) && count($seoJson) === 1 && isset($seoJson[0]['post_uuid']) && $seoJson[0]['post_uuid'] === $pubCtx && isset($seoJson[0]['title']['text'][0]) && $seoJson[0]['title']['text'][0] === 'Publishable Article', substr((string)file_get_contents($seoJsonFile), 0, 200));
+    unlink($seoJsonFile);
 }
 
 echo "== articleops: CSRF ==\n";
@@ -1084,6 +1172,10 @@ echo "== articleops: list ==\n";
 $html = runRequest([], [], 'GET', [], '/article_list.php');
 test('article list renders table', strpos($html, '文章列表') !== false && strpos($html, 'articleTable') !== false);
 test('article list edit link', strpos($html, 'article_new.php?eid=') !== false && strpos($html, 'articleDeleteConfirm') !== false && strpos($html, 'articleDeleteModal') !== false);
+$importScriptPos = strpos($html, "var executeBtn = document.getElementById('articleImportExecuteBtn')");
+$importModalPos = strpos($html, 'id="articleImportModal"');
+test('article import script placed after modal markup', $importModalPos !== false && $importScriptPos !== false && $importModalPos < $importScriptPos);
+test('article list unique ctx_id field (sort fix)', substr_count($html, "field: 'ctx_id'") === 1 && strpos($html, "field: '_op'") !== false);
 $json = runRequest(['format' => 'json', 'offset' => 0, 'limit' => 20], [], 'GET', [], '/article_list.php');
 $payload = json_decode($json, true);
 test('article list json endpoint', is_array($payload) && isset($payload['total']) && (int)$payload['total'] >= 2 && is_array($payload['rows']) && isset($payload['rows'][0]['ctx_id']), substr($json, 0, 120));
@@ -1104,6 +1196,62 @@ test('article list delete unknown ctx rejected', is_array($payload) && isset($pa
 $json = runRequest([], ['action' => 'delete-article', 'ctx_id' => $pubCtx, 'csrf_token' => 'x'], 'POST', [], '/article_list.php');
 $payload = json_decode($json, true);
 test('article delete removes published row', is_array($payload) && $payload['rows'][0]['ok'] === true, substr($json, 0, 120));
+
+echo "== article list import log ==\n";
+$json = runRequest([], ['action' => 'import-log', 'csrf_token' => 'x'], 'POST', [], '/article_list.php');
+$payload = json_decode($json, true);
+$firstRow = is_array($payload) && isset($payload['rows'][0]) ? $payload['rows'][0] : null;
+test('article import-log returns summary', is_array($payload) && isset($firstRow['ok']) && $firstRow['ok'] === true && strpos((string)$firstRow['message'], '导入完成') !== false, substr($json, 0, 200));
+$sumMsg = is_array($firstRow) ? (string)$firstRow['message'] : '';
+$sumImported = preg_match('/新增 (\d+) 条/', $sumMsg, $m) ? (int)$m[1] : -1;
+$sumSkipped = preg_match('/跳过 (\d+) 条/', $sumMsg, $m) ? (int)$m[1] : -1;
+$sumMissing = preg_match('/缺失跳过 (\d+) 条/', $sumMsg, $m) ? (int)$m[1] : -1;
+$sumFailed = preg_match('/失败 (\d+) 条/', $sumMsg, $m) ? (int)$m[1] : -1;
+test('article import-log counts sum to 39 lines', $sumImported + $sumSkipped + $sumMissing + $sumFailed === 39 && $sumImported >= 30, $sumMsg);
+$importedFirst = is_array($payload) && isset($payload['rows'][1]) ? $payload['rows'][1] : null;
+$importedCtx = is_array($importedFirst) && !empty($importedFirst['ctx_id']) ? $importedFirst['ctx_id'] : '172620874766e3daeb9ae0f483394068';
+$importedRow = App\Repositories\ArticleRepository::byCtxId($importedCtx);
+test('article import-log row inserted with title', is_array($importedRow) && !empty($importedRow['title']), json_encode($importedRow, JSON_UNESCAPED_UNICODE));
+$wxRow = App\Repositories\ArticleRepository::byCtxId('17868883506a81c09ebdc58113462089');
+test('article import-log okx wechat row url from second column', is_array($wxRow) && (string)$wxRow['url'] === 'https://mp.weixin.qq.com/s/JvS8-gBEc-epBamg3knzSg', json_encode($wxRow, JSON_UNESCAPED_UNICODE));
+test('article import-log writes seodata/json for imported row', file_exists($dataDir . '/seodata/json/' . $importedCtx . '.json'));
+$seoJson = file_exists($dataDir . '/seodata/json/' . $importedCtx . '.json') ? json_decode((string)file_get_contents($dataDir . '/seodata/json/' . $importedCtx . '.json'), true) : null;
+test('article import-log seodata/json is list of one record', is_array($seoJson) && count($seoJson) === 1 && isset($seoJson[0]['post_uuid']) && $seoJson[0]['post_uuid'] === $importedCtx, json_encode($seoJson, JSON_UNESCAPED_UNICODE));
+test('article import-log updates aigc_status.json', file_exists($dataDir . '/seodata/aigc_status.json'));
+$aigc = file_exists($dataDir . '/seodata/aigc_status.json') ? json_decode((string)file_get_contents($dataDir . '/seodata/aigc_status.json'), true) : null;
+$aigcCtxs = is_array($aigc) ? array_column($aigc, 'ctx_id') : [];
+test('article import-log aigc_status contains wechat row', is_array($aigcCtxs) && in_array('17868883506a81c09ebdc58113462089', $aigcCtxs, true), json_encode($aigc, JSON_UNESCAPED_UNICODE));
+test('article import-log json file written', file_exists($dataDir . '/json/' . $importedCtx . '.json'));
+$json = runRequest([], ['action' => 'import-log', 'csrf_token' => 'x'], 'POST', [], '/article_list.php');
+$payload = json_decode($json, true);
+$secondMsg = is_array($payload) && isset($payload['rows'][0]) ? (string)$payload['rows'][0]['message'] : '';
+test('article import-log second run all skipped', preg_match('/新增 (\d+) 条/', $secondMsg, $m) === 1 && (int)$m[1] === 0, $secondMsg);
+
+$tmpLog = $tmpDir . '/import_test.txt';
+file_put_contents($tmpLog, $importedCtx . '|' . $importedCtx . '|{"title":{"text":["SKIPME"]},"post_uuid":"' . $importedCtx . '"}' . "\n" . "BADLINE|NOPE|{not-json" . "\n" . "NEWIMPORT001|NEWIMPORT001|{\"post_uuid\":\"NEWIMPORT001\",\"title\":{\"text\":[\"Imported New\"]},\"content\":{\"html\":[\"<p>hello</p>\"]},\"lang\":\"zh\"}" . "\n");
+$svcResult = App\Services\ArticleService::importFromLogFile($tmpLog);
+test('article import-log service counts', is_array($svcResult) && $svcResult['imported'] === 1 && $svcResult['skipped'] === 1 && $svcResult['failed'] === 1, json_encode($svcResult, JSON_UNESCAPED_UNICODE));
+$svcRow = App\Repositories\ArticleRepository::byCtxId('NEWIMPORT001');
+test('article import-log service row inserted', is_array($svcRow) && $svcRow['title'] === 'Imported New', json_encode($svcRow, JSON_UNESCAPED_UNICODE));
+test('article import-log service json file written', file_exists($dataDir . '/json/NEWIMPORT001.json'));
+$json = runRequest([], ['action' => 'import-log', 'csrf_token' => 'x'], 'POST', [], '/article_list.php');
+$payload = json_decode($json, true);
+$msgAfterSvc = is_array($payload) && isset($payload['rows'][0]) ? (string)$payload['rows'][0]['message'] : '';
+test('article import-log service row skipped by http run', preg_match('/新增 (\d+) 条/', $msgAfterSvc, $m) === 1 && (int)$m[1] === 0, $msgAfterSvc);
+
+$okxJson = '{"post_uuid":"OKXNEW01","title":{"text":["Okx Imported"]},"content":{"html":["<p>hi</p>"]},"lang":"zh","url":"https://mp.weixin.qq.com/s/OKXNEW01"}';
+file_put_contents($tmpDir . '/okx_ref.json', $okxJson);
+file_put_contents($tmpLog, "OKXNEW01|https://mp.weixin.qq.com/s/OKXNEW01|" . $tmpDir . "/okx_ref.json" . "\n" . "OKXMISS01|https://mp.weixin.qq.com/s/OKXMISS01|/www/wwwroot/wpk.cpanice.com/wpk/pokerjson/OKXMISS01.json" . "\n");
+$svcResult = App\Services\ArticleService::importFromLogFile($tmpLog);
+test('article import-log path format imports', is_array($svcResult) && $svcResult['imported'] === 1 && $svcResult['missing'] === 1 && $svcResult['failed'] === 0, json_encode($svcResult, JSON_UNESCAPED_UNICODE));
+$okxRow = App\Repositories\ArticleRepository::byCtxId('OKXNEW01');
+test('article import-log path format row inserted', is_array($okxRow) && $okxRow['title'] === 'Okx Imported' && $okxRow['url'] === 'https://mp.weixin.qq.com/s/OKXNEW01', json_encode($okxRow, JSON_UNESCAPED_UNICODE));
+test('article import-log path format missing json skipped', App\Repositories\ArticleRepository::byCtxId('OKXMISS01') === null);
+$okxLocal = $root . '/pokerjson/17868925356a81d0f739601057407153.json';
+file_put_contents($tmpLog, "OKXREL01|OKXREL01|/www/wwwroot/wpk.cpanice.com/wpk/pokerjson/17868925356a81d0f739601057407153.json\n");
+$svcResult = App\Services\ArticleService::importFromLogFile($tmpLog);
+$okxRelRow = App\Repositories\ArticleRepository::byCtxId('OKXREL01');
+test('article import-log path format basename fallback', is_array($svcResult) && $svcResult['imported'] === 1 && is_array($okxRelRow) && !empty($okxRelRow['title']) && (string)$okxRelRow['ctx_id'] === 'OKXREL01', json_encode($svcResult, JSON_UNESCAPED_UNICODE));
 
 echo "== seo_report ==\n";
 $html = runRequest([], [], 'GET', [], '/seo_report.php');
@@ -1176,6 +1324,7 @@ db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, la
 $html = runRequest([], [], 'GET', [], '/topiclist.php');
 test('topic list page renders header/footer', strpos($html, 'sops-sidebar') !== false && strpos($html, 'footer-sops') !== false);
 test('topic list page uses server-side table', strpos($html, "url: 'topiclist.php'") !== false && strpos($html, 'sidePagination: \'server\'') !== false);
+test('topic list unique ctx_id field (sort fix)', substr_count($html, "field: 'ctx_id'") === 1 && strpos($html, "field: '_op'") !== false);
 $json = runRequest(['format' => 'json'], [], 'GET', [], '/topiclist.php');
 $payload = json_decode($json, true);
 test('topic list json returns total+rows', is_array($payload) && isset($payload['total']) && $payload['total'] >= 1 && isset($payload['rows'][0]['ctx_id']), substr($json, 0, 120));

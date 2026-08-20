@@ -4,13 +4,24 @@ namespace App\Repositories;
 
 use App\Database;
 use App\Services\TopicService;
+use App\Support\Cache;
 
 class TopicRepository
 {
     const TABLE = 'sitetopic';
 
+    private static $ensured = false;
+
     public static function ensureTable()
     {
+        if (self::$ensured) {
+            return;
+        }
+        $exists = Database::fetchOne('SELECT 1 FROM "sqlite_master" WHERE "type" = \'table\' AND "name" = \'sitetopic\'');
+        if ($exists !== null) {
+            self::$ensured = true;
+            return;
+        }
         Database::connection()->exec('CREATE TABLE IF NOT EXISTS "sitetopic" (
             "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
             "ctx_id" VARCHAR UNIQUE NOT NULL,
@@ -27,6 +38,8 @@ class TopicRepository
         )');
         Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_sitetopic_status" ON "sitetopic" ("status")');
         Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_sitetopic_keyword" ON "sitetopic" ("keyword")');
+        Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_sitetopic_domain" ON "sitetopic" ("domain")');
+        self::$ensured = true;
     }
 
     public static function byCtxId($ctxId)
@@ -48,7 +61,11 @@ class TopicRepository
         $statement = $db->prepare('DELETE FROM "sitetopic" WHERE "ctx_id" = :ctx_id');
         $statement->bindValue(':ctx_id', (string)$ctxId);
         $statement->execute();
-        return $db->changes() > 0;
+        $deleted = $db->changes() > 0;
+        if ($deleted) {
+            Cache::forget('topic:summarize');
+        }
+        return $deleted;
     }
 
     public static function byKeywordAndGitName($keyword, $gitName)
@@ -122,6 +139,7 @@ class TopicRepository
             $db->exec('ROLLBACK');
             throw $e;
         }
+        Cache::forget('topic:summarize');
         $data['ctx_id'] = isset($data['ctx_id']) ? $data['ctx_id'] : (isset($existing['ctx_id']) ? $existing['ctx_id'] : '');
         return $data;
     }
@@ -173,53 +191,58 @@ class TopicRepository
 
     public static function summarize()
     {
-        self::ensureTable();
-        $rows = Database::fetchAll('SELECT "domain", "status", "lasttask" FROM "sitetopic"');
+        return Cache::remember('topic:summarize', 60, function () {
+            self::ensureTable();
+            return self::computeSummary();
+        });
+    }
+
+    private static function computeSummary()
+    {
         $byStatus = ['total' => 0, 'aidone' => 0, 'enable' => 0, 'other' => 0];
-        $byDomain = [];
-        $byDate = [];
-        foreach ($rows as $row) {
-            $status = isset($row['status']) ? $row['status'] : '';
-            $byStatus['total']++;
-            if ($status === 'aidone') {
-                $byStatus['aidone']++;
-            } elseif ($status === 'enable') {
-                $byStatus['enable']++;
-            } else {
-                $byStatus['other']++;
-            }
-
-            $domain = isset($row['domain']) ? $row['domain'] : '';
-            if ($domain !== '') {
-                if (!isset($byDomain[$domain])) {
-                    $byDomain[$domain] = ['total' => 0, 'aidone' => 0, 'enable' => 0, 'other' => 0];
-                }
-                $byDomain[$domain]['total']++;
-                if ($status === 'aidone') {
-                    $byDomain[$domain]['aidone']++;
-                } elseif ($status === 'enable') {
-                    $byDomain[$domain]['enable']++;
-                } else {
-                    $byDomain[$domain]['other']++;
-                }
-            }
-
-            $lasttask = isset($row['lasttask']) ? (string)$row['lasttask'] : '';
-            $taskDate = strlen($lasttask) >= 8 ? substr($lasttask, 0, 8) : '';
-            if ($taskDate !== '') {
-                if (!isset($byDate[$taskDate])) {
-                    $byDate[$taskDate] = ['total' => 0, 'aidone' => 0, 'enable' => 0, 'other' => 0];
-                }
-                $byDate[$taskDate]['total']++;
-                if ($status === 'aidone') {
-                    $byDate[$taskDate]['aidone']++;
-                } elseif ($status === 'enable') {
-                    $byDate[$taskDate]['enable']++;
-                } else {
-                    $byDate[$taskDate]['other']++;
-                }
-            }
+        $row = Database::fetchOne(
+            'SELECT COUNT(*) AS "total",'
+            . ' SUM(CASE WHEN "status" = \'aidone\' THEN 1 ELSE 0 END) AS "aidone",'
+            . ' SUM(CASE WHEN "status" = \'enable\' THEN 1 ELSE 0 END) AS "enable"'
+            . ' FROM "sitetopic"'
+        );
+        if (is_array($row)) {
+            $total = isset($row['total']) ? (int)$row['total'] : 0;
+            $aidone = isset($row['aidone']) ? (int)$row['aidone'] : 0;
+            $enable = isset($row['enable']) ? (int)$row['enable'] : 0;
+            $byStatus = ['total' => $total, 'aidone' => $aidone, 'enable' => $enable, 'other' => $total - $aidone - $enable];
         }
+
+        $byDomain = [];
+        $rows = Database::fetchAll(
+            'SELECT "domain", COUNT(*) AS "total",'
+            . ' SUM(CASE WHEN "status" = \'aidone\' THEN 1 ELSE 0 END) AS "aidone",'
+            . ' SUM(CASE WHEN "status" = \'enable\' THEN 1 ELSE 0 END) AS "enable"'
+            . ' FROM "sitetopic" WHERE "domain" IS NOT NULL AND "domain" != \'\''
+            . ' GROUP BY "domain" ORDER BY MIN("id")'
+        );
+        foreach ($rows as $r) {
+            $t = (int)$r['total'];
+            $a = (int)$r['aidone'];
+            $e = (int)$r['enable'];
+            $byDomain[(string)$r['domain']] = ['total' => $t, 'aidone' => $a, 'enable' => $e, 'other' => $t - $a - $e];
+        }
+
+        $byDate = [];
+        $rows = Database::fetchAll(
+            'SELECT substr("lasttask", 1, 8) AS "d", COUNT(*) AS "total",'
+            . ' SUM(CASE WHEN "status" = \'aidone\' THEN 1 ELSE 0 END) AS "aidone",'
+            . ' SUM(CASE WHEN "status" = \'enable\' THEN 1 ELSE 0 END) AS "enable"'
+            . ' FROM "sitetopic" WHERE "lasttask" IS NOT NULL AND length("lasttask") >= 8'
+            . ' GROUP BY substr("lasttask", 1, 8)'
+        );
+        foreach ($rows as $r) {
+            $t = (int)$r['total'];
+            $a = (int)$r['aidone'];
+            $e = (int)$r['enable'];
+            $byDate[(string)$r['d']] = ['total' => $t, 'aidone' => $a, 'enable' => $e, 'other' => $t - $a - $e];
+        }
+
         krsort($byDate);
         uasort($byDomain, function ($a, $b) {
             return $b['total'] <=> $a['total'];

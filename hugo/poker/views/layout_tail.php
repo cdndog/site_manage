@@ -23,5 +23,6 @@
   <script src="js/bootstrap.bundle.min.js"></script>
   <script src="js/bootstrap-table.min.js"></script>
   <script src="js/bootstrap-select.min.js"></script>
+  <script src="js/sops-toast.js"></script>
   <script src="js/siteops.js"></script>
 </html>

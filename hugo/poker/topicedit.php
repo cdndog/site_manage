@@ -43,8 +43,7 @@ try {
 <script>
 function refreshPicture(el_id) {
     var text_raw = document.getElementById('textarea_'+el_id).value.split("|");
-    // alert(text_raw[3]);
-    if (text_raw[3].length > 0) {document.getElementById('image_'+el_id).src = text_raw[3];} else {alert("picture not found.");}
+    if (text_raw[3].length > 0) {document.getElementById('image_'+el_id).src = text_raw[3];} else {sopsToast("picture not found.", 'warning');}
 }
 </script>
 <?php
@@ -445,8 +444,8 @@ if ($topic_data) { ?>
                 // Prevent form submission
                 event.preventDefault();
 
-                // Display an alert with the label value
-                alert('Please fill in all required fields. ' + labelText + ' is required.');
+                // Display a toast with the label value
+                sopsToast('Please fill in all required fields. ' + labelText + ' is required.', 'warning');
 
                 // Optionally, you can focus on the empty input field
                 input.focus();
@@ -467,8 +466,8 @@ if ($topic_data) { ?>
             // Prevent form submission
             event.preventDefault();
 
-            // Display an alert with the label value
-            alert('Please fill in all required fields. ' + labelText + ' is required.');
+            // Display a toast with the label value
+            sopsToast('Please fill in all required fields. ' + labelText + ' is required.', 'warning');
 
             // Optionally, you can focus on the empty textarea
             textarea.focus();
@@ -728,4 +727,5 @@ if ($topic_data) { ?>
   <!-- <script src="https://cdn.bootcdn.net/ajax/libs/jquery/3.5.1/jquery.min.js"></script> -->
   <!-- <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/js/bootstrap.min.js"></script> -->
   <script src="js/bootstrap-select.min.js"></script>
+  <script src="js/sops-toast.js"></script>
 </html>

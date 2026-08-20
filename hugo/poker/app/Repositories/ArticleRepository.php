@@ -4,13 +4,24 @@ namespace App\Repositories;
 
 use App\Database;
 use App\Services\ArticleService;
+use App\Support\Cache;
 
 class ArticleRepository
 {
     const TABLE = 'article';
 
+    private static $ensured = false;
+
     public static function ensureTable()
     {
+        if (self::$ensured) {
+            return;
+        }
+        $exists = Database::fetchOne('SELECT 1 FROM "sqlite_master" WHERE "type" = \'table\' AND "name" = \'article\'');
+        if ($exists !== null) {
+            self::$ensured = true;
+            return;
+        }
         Database::connection()->exec('CREATE TABLE IF NOT EXISTS "article" (
             "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
             "ctx_id" VARCHAR UNIQUE NOT NULL,
@@ -36,6 +47,7 @@ class ArticleRepository
         )');
         Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_article_title" ON "article" ("title")');
         Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_article_pubdomain" ON "article" ("pubdomain")');
+        self::$ensured = true;
     }
 
     public static function byCtxId($ctxId)
@@ -57,7 +69,11 @@ class ArticleRepository
         $statement = $db->prepare('DELETE FROM "article" WHERE "ctx_id" = :ctx_id');
         $statement->bindValue(':ctx_id', (string)$ctxId);
         $statement->execute();
-        return $db->changes() > 0;
+        $deleted = $db->changes() > 0;
+        if ($deleted) {
+            Cache::forget('article:count');
+        }
+        return $deleted;
     }
 
     public static function upsertByCtxId(array $record)
@@ -113,6 +129,7 @@ class ArticleRepository
             $db->exec('ROLLBACK');
             throw $e;
         }
+        Cache::forget('article:count');
         $data['ctx_id'] = isset($data['ctx_id']) ? $data['ctx_id'] : (isset($existing['ctx_id']) ? $existing['ctx_id'] : '');
         return $data;
     }
@@ -140,6 +157,7 @@ class ArticleRepository
             $orderBy = ' ORDER BY "' . $sort . '" ' . $direction . ', "id" DESC';
         }
         $total = Database::fetchOne('SELECT COUNT(*) AS "c" FROM "article"' . $where, $params);
+        $totalCount = isset($total['c']) ? (int)$total['c'] : 0;
         $page = max(1, $page);
         $offset = ($page - 1) * $perPage;
         $rows = Database::fetchAll(
@@ -149,7 +167,7 @@ class ArticleRepository
         );
         return [
             'rows' => $rows,
-            'total' => isset($total['c']) ? (int)$total['c'] : 0,
+            'total' => $totalCount,
         ];
     }
 }

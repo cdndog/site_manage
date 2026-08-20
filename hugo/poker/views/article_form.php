@@ -263,7 +263,7 @@
                 try {
                     new URL(imageUrl);
                 } catch (e) {
-                    alert('图片链接格式无效');
+                    sopsToast('图片链接格式无效', 'warning');
                     return;
                 }
                 document.getElementById('modalImage').setAttribute('src', imageUrl);
@@ -292,14 +292,14 @@
                 if (!input.value.trim()) {
                     var label = form.querySelector('label[for="' + input.id + '"]');
                     event.preventDefault();
-                    alert('Please fill in all required fields. ' + (label ? label.textContent : input.id) + ' is required.');
+                    sopsToast('Please fill in all required fields. ' + (label ? label.textContent : input.id) + ' is required.', 'warning');
                     input.focus();
                     return;
                 }
             }
             if (!textarea.value.trim()) {
                 event.preventDefault();
-                alert('Please fill in all required fields. 正文内容 is required.');
+                sopsToast('Please fill in all required fields. 正文内容 is required.', 'warning');
                 textarea.focus();
                 return;
             }
@@ -317,7 +317,7 @@
                 var tipToast = new bootstrap.Toast(document.getElementById('tipToast'), { delay: 3000 });
                 tipToast.show();
             } else {
-                alert(message);
+                sopsToast(message, isError ? 'danger' : 'success');
             }
         }
         window.showTip = showTip;
@@ -362,7 +362,8 @@
                     if (current.indexOf(o.value.toLowerCase()) !== -1) o.selected = true;
                 });
                 if (window.jQuery && jQuery.fn.selectpicker) {
-                    jQuery('#post_pubdomain').selectpicker('refresh');
+                    jQuery('#post_pubdomain').selectpicker('destroy');
+                    jQuery('#post_pubdomain').selectpicker();
                 }
                 showTip('站点列表刷新成功，共 ' + list.length + ' 个站点。', false);
             }).catch(function(e) {
