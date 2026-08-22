@@ -310,7 +310,15 @@ class ArticleService
             return [];
         }
         $output['ctx_id'] = isset($json['post_uuid']) ? (string)$json['post_uuid'] : '';
-        $output['keyword'] = isset($json['topic']) ? (string)$json['topic'] : '';
+        // keyword 优先取 topic（发布时由 publish() 写入），导入日志时 topic 为空则回退取 title
+        $kw = isset($json['topic']) && trim((string)$json['topic']) !== '' ? trim((string)$json['topic']) : '';
+        if ($kw === '' && isset($json['title']['text'][0])) {
+            $kw = trim((string)$json['title']['text'][0]);
+        }
+        if ($kw === '' && isset($json['title']) && is_string($json['title'])) {
+            $kw = trim($json['title']);
+        }
+        $output['keyword'] = $kw;
         $output['lang'] = isset($json['lang']) ? (string)$json['lang'] : '';
         $output['pubdomain'] = isset($json['pubdomain']) && is_array($json['pubdomain']) ? implode(',', $json['pubdomain']) : '';
         $ctxId = (string)$json['post_uuid'];
@@ -357,11 +365,36 @@ class ArticleService
         }
 
         if (!empty($json['pubdomain'])) {
-            $indexFile = 'seodata/aigc_status.json';
-            $res = self::localSaveAigcStatus($indexFile, [$json]);
-            $messages[] = $indexFile . ' -> ' . implode(',', $json['pubdomain']) . ' (' . $res . ')';
+            // 主存 DB 索引，O(log n) 替代全量 JSON R/W
+            $rep = self::datareportFormat($json);
+            if (!empty($rep)) {
+                \App\Database::execute(
+                    'INSERT OR REPLACE INTO "aigc_status" ("ctx_id","keyword","lang","pubdomain","createAt","publishAt") VALUES (:c,:k,:l,:p,:ca,:pa)',
+                    [':c'=>$rep['ctx_id'],':k'=>$rep['keyword'],':l'=>$rep['lang'],':p'=>$rep['pubdomain'],':ca'=>$rep['createAt'],':pa'=>$rep['publishAt']]
+                );
+            }
+            // 异步刷新缓存文件供旧读端兼容
+            self::refreshAigcStatusCache();
+            $messages[] = 'aigc_status DB upserted for ' . implode(',', (array)$json['pubdomain']);
         }
         return $messages;
+    }
+
+    private static function refreshAigcStatusCache()
+    {
+        try {
+            if (function_exists('fastcgi_finish_request')) {
+                // 让上传响应先返回，后台再刷缓存
+                fastcgi_finish_request();
+            }
+            $rows = \App\Database::fetchAll('SELECT * FROM "aigc_status" ORDER BY "publishAt" DESC');
+            $file = \App\Config::dataDir() . '/seodata/aigc_status.json';
+            $tmp = $file . '.tmp';
+            file_put_contents($tmp, json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            @rename($tmp, $file);
+        } catch (\Throwable $e) {
+            error_log('[saveSeoData] refresh cache failed: ' . $e->getMessage());
+        }
     }
 
     public static function uploadKeywordData($url, $name, $json, $uniqkey)

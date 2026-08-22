@@ -18,9 +18,9 @@ return [
         // 静态 API CSRF token：curl/脚本调用时可携带 csrf_token=xxx（POST 字段或 X-CSRF-Token 头）绕过浏览器 cookie 校验。
         // 未配置（留空/注释）时所有入口维持原有行为；配置后所有入口（含页面与任务脚本）要求有效 token 或已登录会话（git 服务器 IP 白名单除外）。
         // 每个值应为高熵随机串，用 curl -d "csrf_token=your-long-random-token-here" 或 -H "X-CSRF-Token: your-long-random-token-here" 访问
-        // 'api_csrf_tokens' => [
-        //     'replace-with-a-long-random-token',
-        // ],
+        'api_csrf_tokens' => [
+            'replace-with-a-long-random-token',
+        ],
         // 顶部导航功能入口（header 模块）：['title' => 名称, 'url' => 入口, 'icon' => bootstrap-icons 类名]
         // 未配置时使用默认值：站点录入 / SEO 报表。新增功能入口只需在此追加一行
         // 'header_modules' => [

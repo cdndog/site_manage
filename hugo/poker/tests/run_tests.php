@@ -28,6 +28,7 @@ mkdir($dataDir, 0755, true);
 putenv('APP_DB_FILE=' . $testDb);
 putenv('APP_DATA_DIR=' . $dataDir);
 putenv('APP_CSRF_SECRET=testcsrfsecret');
+putenv('APP_API_CSRF_TOKENS=');
 
 $db = new SQLite3($testDb);
 $db->enableExceptions(true);
@@ -187,11 +188,12 @@ $flattenModules = function ($list) use (&$flattenModules) {
 };
 $flatMods = $flattenModules($mods);
 $flatUrls = array_map(function ($m) { return isset($m['url']) ? $m['url'] : ''; }, $flatMods);
-test('headerModules grouped by 5 domains', is_array($mods) && count($mods) === 5 && $mods[0]['title'] === '站点管理' && $mods[1]['title'] === '关键词管理' && $mods[2]['title'] === '话题管理' && $mods[3]['title'] === '文章管理' && $mods[4]['title'] === '系统管理');
-test('headerModules contains all entries', in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true));
+test('headerModules grouped by 6 domains', is_array($mods) && count($mods) === 6 && $mods[0]['title'] === '站点管理' && $mods[1]['title'] === '关键词管理' && $mods[2]['title'] === '话题管理' && $mods[3]['title'] === '文章管理' && $mods[4]['title'] === '发布管理' && $mods[5]['title'] === '系统管理');
+test('headerModules contains all entries', in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true) && in_array('publish_list.php', $flatUrls, true));
 $html = runRequest();
 test('header module nav renders', strpos($html, 'sops-sidebar-link') !== false);
 foreach ($flatUrls as $url) {
+    if ($url === 'publish_edit.php') continue; // hidden breadcrumb only
     test('header lists module entry: ' . $url, strpos($html, 'href="' . $url . '"') !== false);
 }
 test('header active state on current page', preg_match('/active" href="siteops\.php"/', $html) === 1, 'no active class');
@@ -457,7 +459,7 @@ db("INSERT INTO keywordmonitorlist (ctx_id, keyword, status, lang, geo, json, ti
 $html = runRequest(['t' => 'kw api token'], [], 'GET', [], '/keywordquery.php', [], 'apitoken-1');
 test('api token allows keyword query via header', strpos($html, 'APITOKK1') !== false, substr($html, 0, 120));
 db("DELETE FROM keywordmonitorlist WHERE ctx_id = 'APITOKK1'");
-putenv('APP_API_CSRF_TOKENS');
+putenv('APP_API_CSRF_TOKENS=');
 App\Config::reset();
 test('api csrf tokens absent by default', App\Config::apiCsrfTokens() === [], App\Config::csrfSecret());
 
@@ -479,7 +481,7 @@ $html = runRequest([], [], 'GET', [], '/topictask.php');
 test('auth+token: task script still 403 for session-less request', strpos($html, 'forbidden: missing or invalid API token') !== false, substr($html, 0, 120));
 $html = runRequest([], [], 'GET', ['siteops_uid' => 'client1']);
 test('auth+token: uid cookie without auth cookie sees login', strpos($html, 'name="login_action"') !== false, substr($html, 0, 120));
-putenv('APP_API_CSRF_TOKENS');
+putenv('APP_API_CSRF_TOKENS=');
 App\Config::reset();
 $html = runRequest([], validPost([
     'post_uuid' => 'AUTHUUID1',
@@ -1801,6 +1803,407 @@ $kparts = explode('|', trim($out));
 test('keywordtask picks dirty row deterministically', $kparts[0] === 'KWBUGST1', trim($out));
 $kbrow = db("SELECT * FROM keywordmonitorlist WHERE ctx_id='KWBUGST1'");
 test('keywordtask writeback keeps status column when json lacks it', is_array($kbrow) && count($kbrow) === 1 && $kbrow[0]['status'] === 'disable', json_encode($kbrow));
+
+echo "== API endpoints for UiVision ==\n";
+putenv('APP_API_CSRF_TOKENS=uivision-key-1');
+App\Config::reset();
+App\Database::reset();
+
+function runApiEndpoint(string $file): string
+{
+    ob_start();
+    include $file;
+    $out = ob_get_clean();
+    return $out;
+}
+
+// --- api/topic_update.php ---
+resetRequest();
+$_POST = ['post_keyword' => '', 'post_gitname' => '', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_update.php');
+test('topic_update missing keyword returns 400', strpos($out, 'FAIL') !== false && strpos($out, 'forbidden') === false, $out);
+
+resetRequest();
+$_POST = [
+    'post_keyword' => 'api topic kw',
+    'post_gitname' => 'apitopic',
+    'post_domain' => 'apitopic.com',
+    'post_lang' => 'en',
+    'post_geo' => 'US',
+    'post_pubdir' => 'article',
+    'post_status' => 'aidone',
+    'post_lasttask' => date('Ymd'),
+    'post_bulkkeyword' => 'disable',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_update.php');
+test('topic_update inserts via API', strpos($out, 'OK:') !== false, $out);
+$rows = db("SELECT * FROM sitetopic WHERE keyword = 'api topic kw' AND git_name = 'apitopic'");
+test('topic_update wrote row to sitetopic', count($rows) === 1, json_encode($rows));
+
+resetRequest();
+$_POST = [
+    'post_keyword' => 'api topic kw',
+    'post_gitname' => 'apitopic',
+    'post_domain' => 'apitopic.com',
+    'post_lang' => 'ja',
+    'post_geo' => 'JP',
+    'post_pubdir' => 'article',
+    'post_status' => 'done',
+    'post_lasttask' => date('Ymd'),
+    'post_bulkkeyword' => 'disable',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_update.php');
+test('topic_update updates existing via API', strpos($out, 'OK:') !== false, $out);
+$rows = db("SELECT * FROM sitetopic WHERE keyword = 'api topic kw' AND git_name = 'apitopic'");
+test('topic_update updated lang to ja', count($rows) === 1 && $rows[0]['lang'] === 'ja', json_encode($rows));
+
+resetRequest();
+$_GET = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_update.php');
+test('topic_update rejects GET', strpos($out, 'FAIL') !== false, $out);
+
+resetRequest();
+$_POST = [
+    'post_keyword' => 'api topic kw2',
+    'post_gitname' => 'apitopic',
+    'post_domain' => 'apitopic.com',
+    'post_bulkkeyword' => 'disable',
+    'csrf_token' => 'wrong-token',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_update.php');
+test('topic_update rejects bad API token', strpos($out, 'forbidden') !== false, $out);
+
+// --- api/keyword_update.php ---
+resetRequest();
+$_POST = ['post_keyword' => '', 'post_gitname' => '', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_update.php');
+test('keyword_update missing keyword returns 400', strpos($out, 'FAIL') !== false && strpos($out, 'forbidden') === false, $out);
+
+resetRequest();
+$_POST = [
+    'post_keyword' => 'api kw test',
+    'post_gitname' => 'apikw',
+    'post_lang' => 'en',
+    'post_geo' => 'US',
+    'post_pubdir' => 'article',
+    'post_status' => 'enable',
+    'post_bulkkeyword' => 'disable',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_update.php');
+test('keyword_update inserts via API', strpos($out, 'OK:') !== false, $out);
+$rows = db("SELECT * FROM keywordmonitorlist WHERE keyword = 'api kw test' AND git_name = 'apikw'");
+test('keyword_update wrote row to keywordmonitorlist', count($rows) === 1, json_encode($rows));
+
+resetRequest();
+$_POST = [
+    'post_keyword' => 'api kw test',
+    'post_gitname' => 'apikw',
+    'post_lang' => 'ja',
+    'post_geo' => 'JP',
+    'post_pubdir' => 'article',
+    'post_status' => 'disable',
+    'post_bulkkeyword' => 'disable',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_update.php');
+test('keyword_update updates existing via API', strpos($out, 'OK:') !== false, $out);
+$rows = db("SELECT * FROM keywordmonitorlist WHERE keyword = 'api kw test' AND git_name = 'apikw'");
+test('keyword_update updated status to disable', count($rows) === 1 && $rows[0]['status'] === 'disable', json_encode($rows));
+
+resetRequest();
+$_GET = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_update.php');
+test('keyword_update rejects GET', strpos($out, 'FAIL') !== false, $out);
+
+resetRequest();
+$_POST = [
+    'post_keyword' => 'api kw bad',
+    'post_gitname' => 'apikw',
+    'csrf_token' => 'wrong-token',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_update.php');
+test('keyword_update rejects bad API token', strpos($out, 'forbidden') !== false, $out);
+
+// --- api/site_update.php ---
+resetRequest();
+$_POST = ['post_domain' => '', 'post_gitname' => '', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_update.php');
+test('site_update missing domain returns 400', strpos($out, 'FAIL') !== false && strpos($out, 'forbidden') === false, $out);
+
+resetRequest();
+$_POST = [
+    'post_uuid' => 'APISITEUUID1',
+    'post_gitname' => 'apitest',
+    'post_domain' => 'apitest.com',
+    'post_sitetitle' => 'API Test Site',
+    'post_description' => 'desc',
+    'post_sitelogo' => '',
+    'post_sitedeploy' => 'cloudflare',
+    'post_sitehostip' => '',
+    'post_sns_id' => 'apitest',
+    'post_topnavmenus' => 'home,about',
+    'post_keyword' => 'test',
+    'post_lang' => 'en',
+    'post_sitetype' => 'cta',
+    'post_themetype' => 'poker',
+    'post_status' => 'done',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_update.php');
+test('site_update inserts via API', strpos($out, 'OK:') !== false, $out);
+$rows = db("SELECT * FROM siteops WHERE domain = 'apitest.com'");
+test('site_update wrote row to siteops', count($rows) === 1, json_encode($rows));
+
+resetRequest();
+$_POST = [
+    'post_uuid' => 'APISITEUUID1',
+    'post_gitname' => 'apitest',
+    'post_domain' => 'apitest.com',
+    'post_sitetitle' => 'Updated Title',
+    'post_description' => 'updated desc',
+    'post_sitelogo' => '',
+    'post_sitedeploy' => 'cloudflare',
+    'post_sitehostip' => '',
+    'post_sns_id' => 'apitest',
+    'post_topnavmenus' => 'home,about,contact',
+    'post_keyword' => 'test,update',
+    'post_lang' => 'ja',
+    'post_sitetype' => 'cta',
+    'post_themetype' => 'poker',
+    'post_status' => 'redo',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_update.php');
+test('site_update updates existing via API', strpos($out, 'OK:') !== false, $out);
+$rows = db("SELECT * FROM siteops WHERE domain = 'apitest.com'");
+test('site_update updated title', count($rows) === 1 && $rows[0]['site_title'] === 'Updated Title', json_encode($rows));
+
+resetRequest();
+$_GET = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_update.php');
+test('site_update rejects GET', strpos($out, 'FAIL') !== false, $out);
+
+resetRequest();
+$_POST = [
+    'post_gitname' => 'apibadsite',
+    'post_domain' => 'apibad.com',
+    'csrf_token' => 'wrong-token',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_update.php');
+test('site_update rejects bad API token', strpos($out, 'forbidden') !== false, $out);
+
+// --- api/topic_update.php bulk keyword ---
+resetRequest();
+$_POST = [
+    'post_keyword' => 'bulk1,bulk2',
+    'post_gitname' => 'bulksite',
+    'post_domain' => 'bulk.com',
+    'post_lang' => 'en',
+    'post_geo' => 'US',
+    'post_pubdir' => 'article',
+    'post_status' => 'enable',
+    'post_bulkkeyword' => 'enable',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['HTTP_ORIGIN'] = 'https://uivision.example.com';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_update.php');
+test('topic_update bulk inserts 2 records', strpos($out, 'OK: 2') !== false, $out);
+$rows = db("SELECT * FROM sitetopic WHERE git_name = 'bulksite'");
+test('topic_update bulk wrote 2 rows', count($rows) === 2, json_encode($rows));
+
+echo "== API query/task endpoints for UiVision ==\n";
+putenv('APP_API_CSRF_TOKENS=uivision-key-1');
+App\Config::reset();
+App\Database::reset();
+
+// Ensure sitetopic table exists for query/task tests
+db("CREATE TABLE IF NOT EXISTS \"sitetopic\" (
+    \"id\" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    \"ctx_id\" VARCHAR UNIQUE NOT NULL,
+    \"git_name\" VARCHAR, \"domain\" VARCHAR, \"keyword\" VARCHAR,
+    \"pubdir\" VARCHAR, \"status\" VARCHAR, \"lang\" VARCHAR, \"geo\" VARCHAR,
+    \"lasttask\" VARCHAR, \"json\" VARCHAR, \"time\" DATETIME)");
+db("CREATE TABLE IF NOT EXISTS \"keywordmonitorlist\" (
+    \"id\" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    \"ctx_id\" VARCHAR UNIQUE NOT NULL,
+    \"git_name\" VARCHAR, \"keyword\" VARCHAR, \"pubdir\" VARCHAR,
+    \"status\" VARCHAR, \"lang\" VARCHAR, \"geo\" VARCHAR,
+    \"lasttask\" VARCHAR, \"json\" VARCHAR, \"time\" DATETIME)");
+
+// --- api/topic_query.php ---
+resetRequest();
+$_GET = ['t' => 'all', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_query.php');
+$json = json_decode($out, true);
+test('topic_query all returns JSON array', is_array($json), $out);
+
+resetRequest();
+$_GET = ['t' => 'no-such-kw-xyz', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_query.php');
+test('topic_query unknown keyword empty output', trim($out) === '', $out);
+
+resetRequest();
+$_GET = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_query.php');
+test('topic_query missing t returns 400', strpos($out, 'error') !== false, $out);
+
+resetRequest();
+$_GET = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_query.php');
+test('topic_query rejects POST', strpos($out, 'error') !== false, $out);
+
+// --- api/topic_task.php ---
+db("INSERT OR IGNORE INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, json, time) VALUES ('APITASK1', 'task-site', 'task.com', 'task kw1', 'article', 'enable', 'en', 'US', '{\"keyword\":\"task kw1\",\"git_name\":\"task-site\",\"domain\":\"task.com\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-01 09:00:00')");
+resetRequest();
+$_GET = ['t' => 'task kw1', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_task.php');
+test('topic_task returns pipe-delimited line', strpos($out, 'APITASK1') !== false && strpos($out, '|') !== false, $out);
+$rows = db("SELECT * FROM sitetopic WHERE ctx_id = 'APITASK1'");
+test('topic_task updates lasttask', count($rows) === 1 && $rows[0]['lasttask'] === date('Ymd'), json_encode($rows));
+
+resetRequest();
+$_GET = ['t' => 'all', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_task.php');
+test('topic_task all returns a line', trim($out) !== '', $out);
+
+resetRequest();
+$_GET = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_task.php');
+test('topic_task missing t returns 400', strpos($out, 'FAIL') !== false, $out);
+
+// --- api/keyword_query (keywordtask) ---
+// 清理其他 keyword 行的 lasttask，确保只有 APIKWTASK1 满足 task 查询条件（避免 RANDOM 导致的不确定性）
+db("UPDATE keywordmonitorlist SET lasttask = '" . date('Ymd') . "', json = json_set(CASE WHEN json_valid(json) THEN json ELSE '{}' END, '$.lasttask', '" . date('Ymd') . "')");
+db("INSERT OR IGNORE INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, json, time) VALUES ('APIKWTASK1', 'kwtask-site', 'kwtask kw1', 'article', 'enable', 'en', 'US', '{\"keyword\":\"kwtask kw1\",\"git_name\":\"kwtask-site\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-01 09:00:00')");
+resetRequest();
+$_GET = ['t' => 'all', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_task.php');
+test('keyword_task returns pipe-delimited line', strpos($out, 'APIKWTASK1') !== false && strpos($out, '|') !== false, $out);
+$rows = db("SELECT * FROM keywordmonitorlist WHERE ctx_id = 'APIKWTASK1'");
+test('keyword_task updates lasttask', count($rows) === 1 && $rows[0]['lasttask'] === date('Ymd'), json_encode($rows));
+
+resetRequest();
+$_GET = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_task.php');
+test('keyword_task missing t returns 400', strpos($out, 'FAIL') !== false, $out);
+
+// --- api/site_query.php ---
+resetRequest();
+$_GET = ['t' => 'all', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_query.php');
+$json = json_decode($out, true);
+test('site_query all returns JSON array', is_array($json), $out);
+
+resetRequest();
+$_GET = ['t' => 'no-such-domain-xyz', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_query.php');
+test('site_query unknown search empty output', trim($out) === '' || $out === '[]', $out);
+
+resetRequest();
+$_GET = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_query.php');
+test('site_query missing t returns 400', strpos($out, 'FAIL') !== false || strpos($out, 'error') !== false, $out);
+
+resetRequest();
+$_GET = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_query.php');
+test('site_query rejects POST', strpos($out, 'FAIL') !== false || strpos($out, 'error') !== false, $out);
+
+echo "== uivision_upload seodata sync ==\n";
+function runUivUpload(string $fileContent, string $savename, string $endpoint = '/api/uivision_upload.php'): string {
+    resetRequest();
+    $tmp = tempnam(sys_get_temp_dir(), 'uivtest');
+    file_put_contents($tmp, $fileContent);
+    $_FILES = ['uploadedFile' => ['name' => $savename, 'type' => 'text/plain', 'tmp_name' => $tmp, 'error' => UPLOAD_ERR_OK, 'size' => filesize($tmp)]];
+    $_POST = ['savename' => $savename, 'csrf_token' => 'uivision-key-1'];
+    $_SERVER['REQUEST_METHOD'] = 'POST';
+    $out = runApiEndpoint(dirname(__DIR__) . $endpoint);
+    // temp file may have been moved, cleanup if still exists
+    if (file_exists($tmp)) @unlink($tmp);
+    return $out;
+}
+$validJson = json_encode(["post_uuid"=>"UIVTEST001","title"=>["text"=>["UIV Test"]],"pubdomain"=>["example.com"],"lang"=>"en","topic"=>"kw","content"=>["html"=>["<p>hi</p>"]]]);
+$out = runUivUpload("https://example.com|Test Topic|".$validJson, "UIVTEST001.txt");
+test('uivision_upload valid JSON saves', strpos($out, 'File successfully uploaded') !== false, $out);
+test('uivision_upload seodata json exists', file_exists($GLOBALS['dataDir'] . '/seodata/json/UIVTEST001.json'), $GLOBALS['dataDir'] . '/seodata/json/UIVTEST001.json');
+test('uivision_upload aigc_status exists', file_exists($GLOBALS['dataDir'] . '/seodata/aigc_status.json'), '');
+if (file_exists($GLOBALS['dataDir'] . '/seodata/aigc_status.json')) {
+    $aigc = json_decode((string)file_get_contents($GLOBALS['dataDir'] . '/seodata/aigc_status.json'), true);
+    $found = false; foreach ((array)$aigc as $row) if (($row['ctx_id'] ?? '') === 'UIVTEST001') $found = true;
+    test('uivision_upload aigc_status contains ctx_id', $found, json_encode($aigc));
+}
+$out = runUivUpload("https://example.com|Topic|workflowerror", "UIVTEST002.txt");
+test('uivision_upload workflowerror still uploads file', strpos($out, 'File successfully uploaded') !== false, $out);
+test('uivision_upload workflowerror no seodata', !file_exists($GLOBALS['dataDir'] . '/seodata/json/UIVTEST002.json'), '');
+
+$out = runUivUpload("https://example.com|Topic|{invalid json", "UIVTEST003.txt");
+test('uivision_upload invalid JSON still uploads', strpos($out, 'File successfully uploaded') !== false, $out);
+test('uivision_upload invalid JSON no seodata', !file_exists($GLOBALS['dataDir'] . '/seodata/json/UIVTEST003.json'), '');
+
+$out = runUivUpload("https://example.com|Topic|".json_encode(["title"=>["text"=>["No UUID"]]]), "UIVTEST004.txt");
+test('uivision_upload missing post_uuid no seodata', !file_exists($GLOBALS['dataDir'] . '/seodata/json/UIVTEST004.json'), $out);
+
+$wrapped = json_encode([["post_uuid"=>"UIVTEST005","title"=>["text"=>["Wrapped"]],"pubdomain"=>["example.com"],"lang"=>"en"]]);
+$out = runUivUpload("https://example.com|Topic|".$wrapped, "UIVTEST005.txt");
+test('uivision_upload wrapped array saves', file_exists($GLOBALS['dataDir'] . '/seodata/json/UIVTEST005.json'), $out);
+
+$out = runUivUpload($validJson, "UIVTEST006.txt");
+test('uivision_upload pure JSON saves', file_exists($GLOBALS['dataDir'] . '/seodata/json/UIVTEST001.json'), $out);
+
+// cleanup uploaded files
+@unlink($GLOBALS['dataDir'] . '/seodata/json/UIVTEST001.json');
+@unlink($GLOBALS['dataDir'] . '/seodata/json/UIVTEST005.json');
+@unlink($GLOBALS['dataDir'] . '/seodata/json/UIVTEST006.json');
+@unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST001.txt');
+@unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST002.txt');
+@unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST003.txt');
+@unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST004.txt');
+@unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST005.txt');
+@unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST006.txt');
 
 echo "\n========================================\n";
 echo "PASS: {$GLOBALS['pass']}  FAIL: {$GLOBALS['fail']}\n";

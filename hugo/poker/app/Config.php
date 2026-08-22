@@ -260,6 +260,16 @@ class Config
                 ],
             ],
             [
+                'title' => '发布管理',
+                'url' => 'publish_list.php',
+                'icon' => 'bi-cloud-upload',
+                'perm' => 'article.view',
+                'children' => [
+                    ['title' => '发布列表', 'url' => 'publish_list.php', 'icon' => 'bi-list-check', 'perm' => 'article.view'],
+                    ['title' => '编辑文章', 'url' => 'publish_edit.php', 'icon' => 'bi-pencil-square', 'perm' => 'article.manage', 'hidden' => true],
+                ],
+            ],
+            [
                 'title' => '系统管理',
                 'url' => 'users.php',
                 'icon' => 'bi-shield-lock',
@@ -373,7 +383,10 @@ class Config
     public static function apiCsrfTokens()
     {
         $env = getenv('APP_API_CSRF_TOKENS');
-        if ($env !== false && $env !== '') {
+        if ($env !== false) {
+            if ($env === '') {
+                return [];
+            }
             $keys = array_map('trim', explode(',', $env));
             return array_values(array_filter($keys, function ($key) {
                 return $key !== '';

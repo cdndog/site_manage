@@ -250,11 +250,23 @@ class Security
         if (isset($_POST['csrf_token']) && is_string($_POST['csrf_token']) && $_POST['csrf_token'] !== '') {
             return $_POST['csrf_token'];
         }
+        if (isset($_POST['api_key']) && is_string($_POST['api_key']) && $_POST['api_key'] !== '') {
+            return $_POST['api_key'];
+        }
         if (isset($_GET['csrf_token']) && is_string($_GET['csrf_token']) && $_GET['csrf_token'] !== '') {
             return $_GET['csrf_token'];
         }
+        if (isset($_GET['api_key']) && is_string($_GET['api_key']) && $_GET['api_key'] !== '') {
+            return $_GET['api_key'];
+        }
         if (isset($_SERVER['HTTP_X_CSRF_TOKEN']) && is_string($_SERVER['HTTP_X_CSRF_TOKEN']) && $_SERVER['HTTP_X_CSRF_TOKEN'] !== '') {
             return $_SERVER['HTTP_X_CSRF_TOKEN'];
+        }
+        if (isset($_SERVER['HTTP_X_API_KEY']) && is_string($_SERVER['HTTP_X_API_KEY']) && $_SERVER['HTTP_X_API_KEY'] !== '') {
+            return $_SERVER['HTTP_X_API_KEY'];
+        }
+        if (isset($_SERVER['HTTP_AUTHORIZATION']) && preg_match('/^Bearer\s+(.+)$/i', trim((string)$_SERVER['HTTP_AUTHORIZATION']), $m)) {
+            return trim($m[1]);
         }
         return '';
     }

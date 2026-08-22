@@ -20,9 +20,10 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
         if ($q == "all") {
             $rows = Database::fetchAll('SELECT "ctx_id", "json" FROM "sitetopic" ORDER BY "id"');
         } else {
+            // t 可为任意列的值：ctx_id / keyword / git_name / domain / pubdir / status / lang / geo / lasttask / json
             $rows = Database::fetchAll(
-                'SELECT "ctx_id", "json" FROM "sitetopic" WHERE "keyword" = :keyword ORDER BY "id"',
-                ['keyword' => $q]
+                'SELECT "ctx_id", "json" FROM "sitetopic" WHERE "ctx_id" = :q OR "keyword" = :q OR "git_name" = :q OR "domain" = :q OR "pubdir" = :q OR "status" = :q OR "lang" = :q OR "geo" = :q OR "lasttask" = :q OR "json" LIKE :like ORDER BY "id"',
+                ['q' => $q, 'like' => '%' . $q . '%']
             );
         }
 

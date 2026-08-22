@@ -1,7 +1,9 @@
 <?php
 declare(strict_types=1);
 
-$file = __DIR__ . '/aigc_status.json';
+require __DIR__ . '/../app/bootstrap.php';
+
+use App\Database;
 
 $rawScope = isset($_GET['scope']) ? trim((string)$_GET['scope']) : '7';
 $scopeAll = strtolower($rawScope) === 'all';
@@ -13,40 +15,47 @@ $pubdomain = isset($_GET['pubdomain']) ? strtolower(trim((string)$_GET['pubdomai
 
 $cutoff = gmdate('Y-m-d\TH:i:s\Z', time() - $scope * 86400);
 
-$data = file_get_contents($file);
-if ($data === false) {
-    http_response_code(500);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['error' => 'json file not found']);
-    exit;
-}
-
-$items = json_decode($data, true);
-unset($data);
-if (!is_array($items)) {
-    http_response_code(500);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['error' => 'invalid json']);
-    exit;
-}
-
-$out = [];
-if ($pubdomain !== '') {
-    $needle = ',' . $pubdomain . ',';
-    foreach ($items as $item) {
-        if (($scopeAll || $item['publishAt'] >= $cutoff)
-            && str_contains(',' . strtolower($item['pubdomain']) . ',', $needle)) {
-            $out[] = $item;
+try {
+    $sql = 'SELECT * FROM "aigc_status" WHERE "publishAt" >= :cutoff';
+    $params = [':cutoff' => $cutoff];
+    if ($scopeAll) {
+        $sql = 'SELECT * FROM "aigc_status"';
+        $params = [];
+    }
+    if ($pubdomain !== '') {
+        $sql .= ($scopeAll ? ' WHERE ' : ' AND ') . ' ("," || lower("pubdomain") || "," LIKE :pd)';
+        $params[':pd'] = '%,' . strtolower($pubdomain) . ',%';
+    }
+    $sql .= ' ORDER BY "publishAt" DESC';
+    $out = Database::fetchAll($sql, $params);
+} catch (\Throwable $e) {
+    // 回退读缓存文件
+    $file = __DIR__ . '/aigc_status.json';
+    $data = @file_get_contents($file);
+    $items = $data !== false ? json_decode($data, true) : null;
+    if (!is_array($items)) {
+        http_response_code(500);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['error' => 'invalid json']);
+        exit;
+    }
+    $out = [];
+    if ($pubdomain !== '') {
+        $needle = ',' . $pubdomain . ',';
+        foreach ($items as $item) {
+            if (($scopeAll || $item['publishAt'] >= $cutoff)
+                && str_contains(',' . strtolower($item['pubdomain']) . ',', $needle)) {
+                $out[] = $item;
+            }
+        }
+    } else {
+        foreach ($items as $item) {
+            if ($scopeAll || $item['publishAt'] >= $cutoff) {
+                $out[] = $item;
+            }
         }
     }
-} else {
-    foreach ($items as $item) {
-        if ($scopeAll || $item['publishAt'] >= $cutoff) {
-            $out[] = $item;
-        }
-    }
 }
-unset($items);
 
 header('Content-Type: application/json; charset=utf-8');
 header('X-Result-Count: ' . count($out));

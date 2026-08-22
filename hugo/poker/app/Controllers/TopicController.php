@@ -21,7 +21,13 @@ class TopicController
             http_response_code(204);
             return;
         }
-        header('Content-Type: text/html; charset=utf-8');
+        // 跨域 fetch（UiVision fetch Accept: */*）返回纯文本；同源表单提交（Accept: text/html）保持 HTML
+        $isApiFetch = isset($_SERVER['HTTP_ORIGIN']) && strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'text/html') === false;
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isApiFetch) {
+            header('Content-Type: text/plain; charset=utf-8');
+        } else {
+            header('Content-Type: text/html; charset=utf-8');
+        }
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: SAMEORIGIN');
         try {

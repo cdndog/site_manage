@@ -41,6 +41,16 @@ class Database
         if (self::$migrated) {
             return;
         }
+        // 主存 aigc_status 索引表（与 sitetopic 同库，避免全量 JSON R/W）
+        $db->exec('CREATE TABLE IF NOT EXISTS "aigc_status" ('
+            . '"ctx_id" TEXT PRIMARY KEY, "keyword" TEXT, "lang" TEXT, "pubdomain" TEXT, "createAt" TEXT, "publishAt" TEXT'
+            . ') WITHOUT ROWID');
+        $db->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_publishAt" ON "aigc_status" ("publishAt" DESC)');
+        $db->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_pubdomain" ON "aigc_status" ("pubdomain")');
+        $db->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_lang" ON "aigc_status" ("lang")');
+        // 存量 JSON → DB 迁移（幂等）
+        self::migrateAigcStatus($db);
+
         $usersExists = $db->querySingle('SELECT 1 FROM "sqlite_master" WHERE "type" = \'table\' AND "name" = \'users\'');
         if ($usersExists) {
             $userCount = (int)$db->querySingle('SELECT COUNT(*) FROM "users"');
@@ -181,6 +191,36 @@ class Database
             $assign->bindValue(':role_id', $roleIds['admin']);
             $assign->execute();
         }
+    }
+
+    private static function migrateAigcStatus(\SQLite3 $db)
+    {
+        $file = \App\Config::dataDir() . '/seodata/aigc_status.json';
+        if (!is_file($file) || !is_readable($file)) {
+            return;
+        }
+        $raw = @file_get_contents($file);
+        $items = json_decode((string)$raw, true);
+        if (!is_array($items) || count($items) === 0) {
+            return;
+        }
+        $exists = (int)$db->querySingle('SELECT COUNT(*) FROM "aigc_status"');
+        if ($exists > 0) {
+            return;
+        }
+        $db->exec('BEGIN');
+        $stmt = $db->prepare('INSERT OR IGNORE INTO "aigc_status" ("ctx_id","keyword","lang","pubdomain","createAt","publishAt") VALUES (:c,:k,:l,:p,:ca,:pa)');
+        foreach ($items as $r) {
+            if (empty($r['ctx_id'])) continue;
+            $stmt->bindValue(':c', (string)$r['ctx_id']);
+            $stmt->bindValue(':k', (string)($r['keyword'] ?? ''));
+            $stmt->bindValue(':l', (string)($r['lang'] ?? ''));
+            $stmt->bindValue(':p', (string)($r['pubdomain'] ?? ''));
+            $stmt->bindValue(':ca', (string)($r['createAt'] ?? ''));
+            $stmt->bindValue(':pa', (string)($r['publishAt'] ?? ''));
+            $stmt->execute();
+        }
+        $db->exec('COMMIT');
     }
 
     private static function seedAppConfigs(\SQLite3 $db)

@@ -108,6 +108,9 @@ function businessTables()
             "globalpublish" VARCHAR, "pubdomain" VARCHAR, "translate_to_langs" VARCHAR,
             "content" TEXT, "json" TEXT, "json_file" VARCHAR,
             "time" DATETIME, "update_date" DATETIME)',
+        'aigc_status' => 'CREATE TABLE IF NOT EXISTS "aigc_status" (
+            "ctx_id" TEXT PRIMARY KEY, "keyword" TEXT, "lang" TEXT, "pubdomain" TEXT, "createAt" TEXT, "publishAt" TEXT, "search_text" TEXT
+        ) WITHOUT ROWID',
     ];
 }
 
@@ -143,6 +146,7 @@ function expectedColumns()
             'savename', 'globalpublish', 'pubdomain', 'translate_to_langs',
             'content', 'json', 'json_file', 'time', 'update_date',
         ],
+        'aigc_status' => ['ctx_id', 'keyword', 'lang', 'pubdomain', 'createAt', 'publishAt', 'search_text'],
     ];
 }
 
@@ -181,6 +185,12 @@ function expectedIndexes()
             'idx_sitetopic_status'  => 'CREATE INDEX IF NOT EXISTS "idx_sitetopic_status" ON "sitetopic" ("status")',
             'idx_sitetopic_keyword' => 'CREATE INDEX IF NOT EXISTS "idx_sitetopic_keyword" ON "sitetopic" ("keyword")',
             'idx_sitetopic_domain'  => 'CREATE INDEX IF NOT EXISTS "idx_sitetopic_domain" ON "sitetopic" ("domain")',
+        ],
+        'aigc_status' => [
+            'idx_aigc_publishAt' => 'CREATE INDEX IF NOT EXISTS "idx_aigc_publishAt" ON "aigc_status" ("publishAt" DESC)',
+            'idx_aigc_pubdomain' => 'CREATE INDEX IF NOT EXISTS "idx_aigc_pubdomain" ON "aigc_status" ("pubdomain")',
+            'idx_aigc_lang'      => 'CREATE INDEX IF NOT EXISTS "idx_aigc_lang" ON "aigc_status" ("lang")',
+            'idx_aigc_search'    => 'CREATE INDEX IF NOT EXISTS "idx_aigc_search" ON "aigc_status" ("search_text")',
         ],
     ];
 }

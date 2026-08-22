@@ -77,6 +77,7 @@ if (count($crumbs) === 0) {
           <div class="collapse<?php echo $childActive ? ' show' : ''; ?>" id="sops-submenu-<?php echo $menuIndex; ?>">
             <ul class="sops-submenu">
               <?php foreach ($children as $child): ?>
+                <?php if (!empty($child['hidden'])) continue; ?>
                 <?php
                 $childUrl = isset($child['url']) ? (string)$child['url'] : '#';
                 $childActiveClass = $urlMatches($childUrl) ? ' active' : '';

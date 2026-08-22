@@ -1,46 +1,55 @@
 <?php
-// uivision_upload.php - 高性能文件上传端点
 declare(strict_types=1);
 
-// CORS 必须在鉴权前发送，否则 403 响应无 CORS 头会导致浏览器报 CORS 错误而非 403 文案
+// api/uivision_upload.php - API 版高性能文件上传（与根 uivision_upload.php 同功能，SOPS_TESTING 兼容）
+
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, X-CSRF-Token, X-API-Key, Authorization');
 header('Access-Control-Max-Age: 86400');
 header('Content-Type: text/plain; charset=utf-8');
 
-require __DIR__ . '/app/bootstrap.php';
-\App\Support\Security::requireApiToken();
+require __DIR__ . '/../app/bootstrap.php';
+
+use App\Config;
+use App\Support\Security;
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    if (!defined('SOPS_TESTING')) { exit; }
+    return;
+}
+
+if (Config::apiCsrfTokens() !== [] && !Security::apiTokenValid() && !Security::hasValidSession() && !Security::isGitServerIp()) {
+    http_response_code(403);
+    echo 'forbidden: missing or invalid API token';
+    if (!defined('SOPS_TESTING')) { exit; }
+    return;
+}
+
 set_time_limit(0);
 ini_set('max_execution_time', '300');
 ini_set('max_input_time', '-1');
 
-$uploadDir = __DIR__ . '/uiaigcdatas/';
-$maxBytes = 256 * 1024 * 1024; // 256MB
+$uploadDir = dirname(__DIR__) . '/uiaigcdatas/';
+$maxBytes = 256 * 1024 * 1024;
 
-// 快速失败：CORS 预检请求直接放行
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
-
-// 快速失败：仅接受 POST
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo 'Invalid request method.';
-    exit;
+    if (!defined('SOPS_TESTING')) { exit; }
+    return;
 }
 
-// 快速失败：必须带文件字段
 if (!isset($_FILES['uploadedFile']) || !is_array($_FILES['uploadedFile'])) {
     http_response_code(400);
     echo 'No file uploaded.';
-    exit;
+    if (!defined('SOPS_TESTING')) { exit; }
+    return;
 }
 
 $file = $_FILES['uploadedFile'];
 
-// 快速失败：上传错误（含超出 php.ini 限制）
 if ($file['error'] !== UPLOAD_ERR_OK) {
     $message = match ($file['error']) {
         UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'File too large (php.ini upload_max_filesize/post_max_size limit).',
@@ -52,30 +61,30 @@ if ($file['error'] !== UPLOAD_ERR_OK) {
     };
     http_response_code(400);
     echo $message;
-    exit;
+    if (!defined('SOPS_TESTING')) { exit; }
+    return;
 }
 
-// 快速失败：超过业务大小上限
 if ($file['size'] > $maxBytes) {
     http_response_code(413);
     echo 'File too large. Max ' . (int)round($maxBytes / 1048576) . 'MB allowed.';
-    exit;
+    if (!defined('SOPS_TESTING')) { exit; }
+    return;
 }
 
-// 扩展名白名单（防恶意文件名），默认兜底 dat
 $extension = strtolower((string)pathinfo((string)$file['name'], PATHINFO_EXTENSION));
 if (!preg_match('/^[a-z0-9]{1,10}$/', $extension)) {
     $extension = 'txt';
 }
 
-// 自定义保存名：仅允许安全字符，防目录穿越，可覆盖同名文件
 $customName = '';
 if (isset($_POST['savename']) && trim((string)$_POST['savename']) !== '') {
     $customName = basename(trim((string)$_POST['savename']));
     if (!preg_match('/^[A-Za-z0-9._-]{1,120}$/', $customName)) {
         http_response_code(400);
         echo 'Invalid save name.';
-        exit;
+        if (!defined('SOPS_TESTING')) { exit; }
+        return;
     }
     if (stripos($customName, '.') === false) {
         $customName .= '.' . $extension;
@@ -88,37 +97,32 @@ if (!is_dir($uploadDir)) {
     mkdir($uploadDir, 0755, true);
 }
 
-// rename 级移动（同文件系统近瞬时），SOPS_TESTING 时兼容 CLI 的 rename
 $moved = move_uploaded_file($file['tmp_name'], $uploadDir . $customName);
 if (!$moved && defined('SOPS_TESTING')) {
     $moved = @rename($file['tmp_name'], $uploadDir . $customName);
 }
 if ($moved) {
     echo "File successfully uploaded as $customName";
-    // 同步更新 seodata：校验 JSON 无异常后写入 seodata/json/<ctx_id>.json 与 seodata/aigc_status.json
     $savedPath = $uploadDir . $customName;
     if (is_file($savedPath)) {
         $raw = (string)file_get_contents($savedPath);
-        // 文件格式：URL|TOPIC|JSON（第三段为 JS 输出的 JSON 字符串）
         $parts = explode('|', $raw, 3);
         $jsonStr = isset($parts[2]) ? trim($parts[2]) : trim($raw);
         if ($jsonStr !== '' && $jsonStr !== 'workflowerror') {
             $decoded = json_decode($jsonStr, true);
-            // 兼容 seodata/json/*.json 形如 [ { ... } ] 的包裹数组
             if (is_array($decoded) && isset($decoded[0]) && is_array($decoded[0])) {
                 $decoded = $decoded[0];
             }
             if (is_array($decoded) && !empty($decoded['post_uuid'])) {
-                // 校验关键字段存在且为合法 JSON
                 try {
                     \App\Services\ArticleService::saveSeoData($decoded);
                 } catch (\Throwable $e) {
-                    error_log('[uivision_upload] saveSeoData failed for ' . $customName . ': ' . $e->getMessage());
+                    error_log('[api/uivision_upload] saveSeoData failed for ' . $customName . ': ' . $e->getMessage());
                 }
             } elseif (is_array($decoded)) {
-                error_log('[uivision_upload] JSON missing post_uuid for ' . $customName);
+                error_log('[api/uivision_upload] JSON missing post_uuid for ' . $customName);
             } else {
-                error_log('[uivision_upload] invalid JSON for ' . $customName . ': ' . substr($jsonStr, 0, 200));
+                error_log('[api/uivision_upload] invalid JSON for ' . $customName . ': ' . substr($jsonStr, 0, 200));
             }
         }
     }
@@ -126,5 +130,3 @@ if ($moved) {
     http_response_code(500);
     echo 'Error moving the uploaded file.';
 }
-
-// curl -F "uploadedFile=@175756461898001eb77c8f400f8a35a5.csv" "localhost:8888/uivision_upload.php"
