@@ -2,12 +2,18 @@
   <div class="card card-sops">
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
       <h1 class="h5 mb-0 page-title"><i class="bi bi-bar-chart-line mr-2" aria-hidden="true"></i><?php echo e($title); ?></h1>
-      <div>
+      <div class="d-flex align-items-center" style="gap:6px;flex-wrap:wrap;">
         <a class="btn btn-sm btn-outline-secondary" href="seo_report.php?reporttype=wordlist"><i class="bi bi-list-check mr-1" aria-hidden="true"></i>关键词列表</a>
         <a class="btn btn-sm btn-outline-secondary" href="seo_report.php?reporttype=relateword"><i class="bi bi-link-45deg mr-1" aria-hidden="true"></i>关联关键词</a>
         <a class="btn btn-sm btn-outline-secondary" href="seo_report.php?reporttype=sitelist"><i class="bi bi-globe mr-1" aria-hidden="true"></i>站点列表</a>
         <a class="btn btn-sm btn-outline-secondary" href="seo_report.php?reporttype=topiclist"><i class="bi bi-journal-richtext mr-1" aria-hidden="true"></i>话题列表</a>
         <a class="btn btn-sm btn-outline-secondary" href="keywordops.php"><i class="bi bi-plus-circle mr-1" aria-hidden="true"></i>新增关键词</a>
+        <?php if ($type === 'sitelist'): ?>
+        <button class="btn btn-sm btn-outline-warning" type="button" id="importSiteBtn" title="从 siteops_setting.txt 恢复站点数据"><i class="bi bi-cloud-download mr-1" aria-hidden="true"></i>站点导入</button>
+        <?php endif; ?>
+        <?php if ($type === 'wordlist'): ?>
+        <button class="btn btn-sm btn-outline-warning" type="button" id="importKeywordBtn" title="从 keyword_monitor_list.txt 恢复关键词数据"><i class="bi bi-cloud-download mr-1" aria-hidden="true"></i>关键词导入</button>
+        <?php endif; ?>
       </div>
     </div>
     <div class="card-body">
@@ -130,7 +136,8 @@
                   limit: params.limit,
                   search: params.search || '',
                   sort: params.sort,
-                  order: params.order
+                  order: params.order,
+                  csrf_token: '<?php echo e(isset($csrf_token) ? $csrf_token : ''); ?>'
                 };
               },
               columns: reportColumns,
@@ -192,4 +199,54 @@
     </div>
   </div>
 </div>
+<?php endif; ?>
+
+<?php if ($type === 'sitelist' || $type === 'wordlist'): ?>
+<div class="modal fade" id="importConfirmModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title"><i class="bi bi-cloud-download text-warning mr-1"></i><span id="importModalTitle">导入数据</span></h5><button type="button" class="close" data-dismiss="modal"><span>&times;</span></button></div>
+      <div class="modal-body">
+        <p id="importModalBody">将从 txt 文件恢复数据到数据库，已存在的记录将跳过。</p>
+        <p class="text-muted small mb-0">导入后自动刷新列表。</p>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button><button type="button" class="btn btn-warning" id="importExecuteBtn"><i class="bi bi-cloud-download mr-1"></i>确定导入</button></div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var importAction='';
+  var importBtn=document.getElementById('importSiteBtn')||document.getElementById('importKeywordBtn');
+  var importModal=document.getElementById('importConfirmModal');
+  var importExec=document.getElementById('importExecuteBtn');
+  var importBody=document.getElementById('importModalBody');
+  var importTitle=document.getElementById('importModalTitle');
+  if(!importBtn||!importModal||!importExec) return;
+  importBtn.addEventListener('click',function(){
+    if(importBtn.id==='importSiteBtn'){importAction='import-site';importTitle.textContent='站点导入';importBody.textContent='将从 siteops_setting.txt 恢复站点数据到数据库，已存在的记录将跳过。';}
+    else{importAction='import-keyword';importTitle.textContent='关键词导入';importBody.textContent='将从 keyword_monitor_list.txt 恢复关键词数据到数据库，已存在的记录将跳过。';}
+    window.jQuery(importModal).modal('show');
+  });
+  importExec.addEventListener('click',function(){
+    importExec.disabled=true;importExec.innerHTML='<i class="bi bi-arrow-repeat mr-1"></i>导入中…';
+    var csrf='<?php echo e(isset($csrf_token) ? $csrf_token : ""); ?>';
+    var xhr=new XMLHttpRequest();
+    xhr.open('POST','seo_report.php',true);
+    xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+    xhr.onreadystatechange=function(){
+      if(xhr.readyState!==4) return;
+      importExec.disabled=false;importExec.innerHTML='<i class="bi bi-cloud-download mr-1"></i>确定导入';
+      window.jQuery(importModal).modal('hide');
+      var msg='导入失败',isError=true;
+      if(xhr.status===200){var resp=null;try{resp=JSON.parse(xhr.responseText);}catch(e){}
+        if(resp){msg=resp.message||'导入完成';isError=resp.ok===false;}
+      }
+      sopsToast(msg,isError?'danger':'success');
+      if(window.jQuery&&window.jQuery.fn&&window.jQuery.fn.bootstrapTable) jQuery('#table').bootstrapTable('refresh');
+    };
+    xhr.send('action='+importAction+'&csrf_token='+encodeURIComponent(csrf));
+  });
+})();
+</script>
 <?php endif; ?>

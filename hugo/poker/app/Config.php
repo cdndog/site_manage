@@ -141,11 +141,32 @@ class Config
         return $merged;
     }
 
+    public static function dbDsn()
+    {
+        $env = getenv('APP_DB_DSN');
+        if ($env !== false) return trim($env);
+        $env = getenv('DATABASE_URL');
+        if ($env !== false && $env !== '') {
+            if (stripos($env, 'postgres://') === 0) {
+                $u = parse_url($env);
+                $dsn = 'pgsql:host=' . ($u['host'] ?? '127.0.0.1') . ';port=' . ($u['port'] ?? 5432) . ';dbname=' . ltrim($u['path'] ?? '', '/');
+                if (!empty($u['user'])) $dsn .= ';user=' . $u['user'];
+                if (!empty($u['pass'])) $dsn .= ';password=' . $u['pass'];
+                return $dsn;
+            }
+            return trim($env);
+        }
+        $configured = self::rawBaseValue('pg_dsn');
+        if (is_string($configured) && trim($configured) !== '') return trim($configured);
+        return '';
+    }
+
     public static function dbFile()
     {
         if (self::$dbFileOverride !== null) {
             return self::$dbFileOverride;
         }
+        if (self::dbDsn() !== '') return self::dbDsn(); // PG 优先
         $env = getenv('APP_DB_FILE');
         if ($env !== false && $env !== '') {
             return $env;

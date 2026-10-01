@@ -21,6 +21,23 @@ try {
     Security::requirePermission('article.manage');
 
     $eid = trim((string)($_GET['eid'] ?? $_POST['post_uuid'] ?? ''));
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'site_list') {
+        if (!Security::csrfVerify(Security::requestToken())) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['total' => 0, 'rows' => [['ok' => false, 'message' => 'CSRF token invalid']]]);
+            return;
+        }
+        $list = [];
+        foreach (SiteRepository::all() as $site) {
+            $list[] = [
+                'domain' => isset($site['domain']) ? (string)$site['domain'] : '',
+                'languages' => isset($site['languages']) ? (string)$site['languages'] : '',
+            ];
+        }
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['total' => count($list), 'rows' => $list]);
+        return;
+    }
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!Security::csrfVerify(Security::requestToken())) {
             http_response_code(403);

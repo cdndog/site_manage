@@ -35,7 +35,7 @@ class RoleRepository
         $statement->bindValue(':name', $data['name']);
         $statement->bindValue(':description', isset($data['description']) ? $data['description'] : '');
         $statement->execute();
-        return (int)$db->lastInsertRowID();
+        return Database::isPg() ? (int)$db->lastInsertId('roles_id_seq') : (int)$db->lastInsertRowID();
     }
 
     public static function update($id, array $data)
@@ -55,24 +55,38 @@ class RoleRepository
             return;
         }
         $db = Database::connection();
-        $db->exec('DELETE FROM "user_roles" WHERE "role_id" = ' . $id);
-        $db->exec('DELETE FROM "role_permissions" WHERE "role_id" = ' . $id);
-        $db->exec('DELETE FROM "roles" WHERE "id" = ' . $id);
+        $isPg = Database::isPg();
+        if ($isPg) { $db->beginTransaction(); } else { $db->exec('BEGIN'); }
+        try {
+            Database::execute('DELETE FROM "user_roles" WHERE "role_id" = :id', [':id' => $id]);
+            Database::execute('DELETE FROM "role_permissions" WHERE "role_id" = :id', [':id' => $id]);
+            Database::execute('DELETE FROM "roles" WHERE "id" = :id', [':id' => $id]);
+            if ($isPg) { $db->commit(); } else { $db->exec('COMMIT'); }
+        } catch (\Throwable $e) {
+            if ($isPg) { $db->rollBack(); } else { $db->exec('ROLLBACK'); }
+            throw $e;
+        }
     }
 
     public static function setPermissions($roleId, array $permissionIds)
     {
         $roleId = (int)$roleId;
         $db = Database::connection();
-        $db->exec('DELETE FROM "role_permissions" WHERE "role_id" = ' . $roleId);
-        $statement = $db->prepare('INSERT OR IGNORE INTO "role_permissions" ("role_id", "permission_id") VALUES (:rid, :pid)');
-        foreach (array_unique(array_map('intval', $permissionIds)) as $permissionId) {
-            if ($permissionId <= 0) {
-                continue;
+        $isPg = Database::isPg();
+        if ($isPg) { $db->beginTransaction(); } else { $db->exec('BEGIN'); }
+        try {
+            Database::execute('DELETE FROM "role_permissions" WHERE "role_id" = :rid', [':rid' => $roleId]);
+            $sql = $isPg
+                ? 'INSERT INTO "role_permissions" ("role_id", "permission_id") VALUES (:rid, :pid) ON CONFLICT DO NOTHING'
+                : 'INSERT OR IGNORE INTO "role_permissions" ("role_id", "permission_id") VALUES (:rid, :pid)';
+            foreach (array_unique(array_map('intval', $permissionIds)) as $permissionId) {
+                if ($permissionId <= 0) { continue; }
+                Database::execute($sql, [':rid' => $roleId, ':pid' => $permissionId]);
             }
-            $statement->bindValue(':rid', $roleId);
-            $statement->bindValue(':pid', $permissionId);
-            $statement->execute();
+            if ($isPg) { $db->commit(); } else { $db->exec('COMMIT'); }
+        } catch (\Throwable $e) {
+            if ($isPg) { $db->rollBack(); } else { $db->exec('ROLLBACK'); }
+            throw $e;
         }
     }
 

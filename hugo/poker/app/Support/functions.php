@@ -19,15 +19,15 @@ if (!function_exists('renderErrorPage')) {
     function renderErrorPage(\Throwable $e)
     {
         if ($e instanceof \App\Support\PermissionDenied) {
-            http_response_code(403);
             if (!headers_sent()) {
+                http_response_code(403);
                 header('Content-Type: text/html; charset=utf-8');
             }
             render('error', ['message' => $e->getMessage()]);
             return;
         }
-        http_response_code(500);
         if (!headers_sent()) {
+            http_response_code(500);
             header('Content-Type: text/html; charset=utf-8');
         }
         echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Error</title></head>'

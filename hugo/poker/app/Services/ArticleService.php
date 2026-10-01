@@ -146,6 +146,7 @@ class ArticleService
             return $result;
         }
         $lines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $records = [];
         foreach ($lines as $line) {
             $line = trim($line);
             if ($line === '') {
@@ -191,11 +192,6 @@ class ArticleService
             }
             $json = self::restoreFromJsonFiles($ctxId, $json);
             $json['post_uuid'] = $ctxId;
-            if (ArticleRepository::byCtxId($ctxId) !== null) {
-                $result['skipped']++;
-                $result['rows'][] = ['ok' => false, 'skipped' => true, 'message' => '已存在，跳过', 'ctx_id' => $ctxId, 'title' => isset($json['title']['text'][0]) ? (string)$json['title']['text'][0] : ''];
-                continue;
-            }
             $record = self::toRecord([], $json);
             $localFile = self::jsonDir() . '/' . $ctxId . '.json';
             if (!is_file($localFile)) {
@@ -206,10 +202,20 @@ class ArticleService
                 file_put_contents($localFile, json_encode($json, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
             }
             $record['json_file'] = self::jsonFileName($ctxId);
-            ArticleRepository::upsertByCtxId($record);
-            self::saveSeoData($json);
-            $result['imported']++;
-            $result['rows'][] = ['ok' => true, 'message' => '已导入', 'ctx_id' => $ctxId, 'title' => $record['title']];
+            $record['_raw_json'] = $json;
+            $records[] = $record;
+        }
+        // 批量导入
+        if (count($records) > 0) {
+            $batchResult = \App\Repositories\ArticleRepository::batchImport($records);
+            $result['imported'] = $batchResult['imported'];
+            $result['skipped'] = $batchResult['skipped'];
+            $result['failed'] += $batchResult['failed'];
+            foreach ($records as $record) {
+                if (isset($record['_raw_json']) && is_array($record['_raw_json'])) {
+                    self::saveSeoData($record['_raw_json']);
+                }
+            }
         }
         return $result;
     }

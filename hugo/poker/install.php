@@ -28,6 +28,77 @@ $configFile   = Config::configFile();
 $request      = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
 
 /**
+ * PG 连接测试 AJAX 端点
+ */
+if ($request === 'POST' && isset($_POST['do']) && $_POST['do'] === 'test_pg') {
+    header('Content-Type: application/json; charset=utf-8');
+    $dsn = trim((string)($_POST['dsn'] ?? ''));
+    if ($dsn === '') {
+        $host  = trim((string)($_POST['host'] ?? '127.0.0.1'));
+        $port  = trim((string)($_POST['port'] ?? '5432'));
+        $dbname = trim((string)($_POST['dbname'] ?? ''));
+        $user  = trim((string)($_POST['user'] ?? 'postgres'));
+        $pass  = (string)($_POST['pass'] ?? '');
+        if ($host !== '' && $dbname !== '' && $user !== '') {
+            $dsn = 'pgsql:host=' . $host . ';port=' . $port . ';dbname=' . $dbname . ';user=' . $user;
+            if ($pass !== '') $dsn .= ';password=' . $pass;
+        }
+    }
+    if ($dsn === '') {
+        echo json_encode(['ok' => false, 'msg' => '请填写完整的连接信息（主机/库名/用户）']);
+        exit;
+    }
+    $result = ['ok' => false, 'msg' => '', 'checks' => []];
+    try {
+        $pdo = new PDO($dsn, null, null, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]);
+        $result['checks'][] = ['label' => '连接数据库', 'ok' => true];
+
+        // 权限检查
+        $dbname = $pdo->query('SELECT current_database()')->fetchColumn();
+        $user   = $pdo->query('SELECT current_user')->fetchColumn();
+
+        // 检查 CREATE 权限（尝试创建临时表）
+        $pdo->exec('CREATE TEMPORARY TABLE _install_test (id INT)');
+        $result['checks'][] = ['label' => 'CREATE TABLE 权限', 'ok' => true];
+
+        // 检查 CREATE EXTENSION 权限
+        try {
+            $pdo->exec('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+            $result['checks'][] = ['label' => 'CREATE EXTENSION 权限（pg_trgm）', 'ok' => true];
+        } catch (\Throwable $e) {
+            $result['checks'][] = ['label' => 'CREATE EXTENSION 权限（pg_trgm）', 'ok' => false, 'hint' => $e->getMessage()];
+        }
+
+        // 检查 CREATE INDEX 权限
+        try {
+            $pdo->exec('CREATE INDEX IF NOT EXISTS _install_test_idx ON _install_test (id)');
+            $result['checks'][] = ['label' => 'CREATE INDEX 权限', 'ok' => true];
+        } catch (\Throwable $e) {
+            $result['checks'][] = ['label' => 'CREATE INDEX 权限', 'ok' => false, 'hint' => $e->getMessage()];
+        }
+        $pdo->exec('DROP TABLE IF EXISTS _install_test');
+
+        // 已有表数量
+        $rows = $pdo->query("SELECT COUNT(*) AS c FROM information_schema.tables WHERE table_schema='public'")->fetch();
+        $result['checks'][] = ['label' => '数据库 ' . $dbname . '（用户 ' . $user . '）', 'ok' => true, 'hint' => '已有 ' . $rows['c'] . ' 张表'];
+
+        $allOk = true;
+        foreach ($result['checks'] as $ck) {
+            if (!$ck['ok']) { $allOk = false; break; }
+        }
+        $result['ok'] = $allOk;
+        $result['msg'] = $allOk ? '所有检查通过' : '部分权限不足，请联系 DBA';
+    } catch (\Throwable $e) {
+        $result['msg'] = '连接失败：' . $e->getMessage();
+    }
+    echo json_encode($result, JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+/**
  * 视图辅助
  */
 function ih($value)
@@ -48,6 +119,7 @@ function envChecks()
     $checks = [];
     $checks['php']    = ['ok' => version_compare(PHP_VERSION, '8.0.0', '>='), 'label' => 'PHP ' . PHP_VERSION . '（需要 >= 8.0）'];
     $checks['sqlite'] = ['ok' => class_exists('SQLite3'), 'label' => 'SQLite3 扩展（php-sqlite3）'];
+    $checks['pgsql']  = ['ok' => class_exists('PDO') && in_array('pgsql', PDO::getAvailableDrivers(), true), 'label' => 'PostgreSQL PDO 驱动（pdo_pgsql）' . (class_exists('PDO') && in_array('pgsql', PDO::getAvailableDrivers(), true) ? '' : '（可选，仅 PG 需要）')];
     $checks['root']   = ['ok' => is_writable(APP_PATH), 'label' => '程序目录 ' . APP_PATH . ' 可写'];
     $checks['config'] = ['ok' => is_file(Config::configFile()) && is_writable(Config::configFile()), 'label' => 'global_config.php 可写'];
     $varDir          = Config::varDir();
@@ -150,21 +222,36 @@ function expectedColumns()
     ];
 }
 
-function tableExists(SQLite3 $db, $table)
+function tableExists($db, string $table): bool
 {
-    $list = $db->query("SELECT 1 FROM \"sqlite_master\" WHERE \"type\" = 'table' AND \"name\" = '" . $db->escapeString($table) . "'");
-    return $list !== false && $list->fetchArray() !== false;
+    if ($db instanceof \SQLite3) {
+        $list = $db->query("SELECT 1 FROM \"sqlite_master\" WHERE \"type\" = 'table' AND \"name\" = '" . $db->escapeString($table) . "'");
+        return $list !== false && $list->fetchArray() !== false;
+    }
+    // PDO — works for both SQLite PDO and PostgreSQL
+    $row = Database::fetchOne('SELECT 1 FROM "information_schema"."tables" WHERE "table_name" = :t', [':t' => $table]);
+    return $row !== null;
 }
 
-function missingColumns(SQLite3 $db, $table, $expected)
+function missingColumns($db, string $table, array $expected): array
 {
     if (!tableExists($db, $table)) {
         return [];
     }
-    $result = $db->query('PRAGMA table_info("' . $db->escapeString($table) . '")');
     $have = [];
-    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-        $have[$row['name']] = true;
+    if ($db instanceof \SQLite3) {
+        $result = $db->query('PRAGMA table_info("' . $db->escapeString($table) . '")');
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            $have[$row['name']] = true;
+        }
+    } else {
+        $rows = Database::fetchAll(
+            'SELECT "column_name" FROM "information_schema"."columns" WHERE "table_name" = :t',
+            [':t' => $table]
+        );
+        foreach ($rows as $row) {
+            $have[$row['column_name']] = true;
+        }
     }
     $missing = [];
     foreach ($expected as $column) {
@@ -178,7 +265,7 @@ function missingColumns(SQLite3 $db, $table, $expected)
 /**
  * 各表性能索引（迁移时自动补建；与 Repository::ensureTable 保持一致）
  */
-function expectedIndexes()
+function expectedIndexes(): array
 {
     return [
         'sitetopic' => [
@@ -195,15 +282,25 @@ function expectedIndexes()
     ];
 }
 
-function missingIndexes(SQLite3 $db, $table, array $indexes)
+function missingIndexes($db, string $table, array $indexes): array
 {
     if (!tableExists($db, $table)) {
         return [];
     }
-    $result = $db->query("SELECT \"name\" FROM \"sqlite_master\" WHERE \"type\" = 'index' AND \"tbl_name\" = '" . $db->escapeString($table) . "'");
     $have = [];
-    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-        $have[$row['name']] = true;
+    if ($db instanceof \SQLite3) {
+        $result = $db->query("SELECT \"name\" FROM \"sqlite_master\" WHERE \"type\" = 'index' AND \"tbl_name\" = '" . $db->escapeString($table) . "'");
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            $have[$row['name']] = true;
+        }
+    } else {
+        $rows = Database::fetchAll(
+            'SELECT "indexname" FROM "pg_indexes" WHERE "schemaname" = \'public\' AND "tablename" = :t',
+            [':t' => $table]
+        );
+        foreach ($rows as $row) {
+            $have[$row['indexname']] = true;
+        }
     }
     $missing = [];
     foreach ($indexes as $name => $sql) {
@@ -215,9 +312,9 @@ function missingIndexes(SQLite3 $db, $table, array $indexes)
 }
 
 /**
- * 写入 global_config.php：base.database 与 base.api_csrf_tokens
+ * 写入 global_config.php：base.database / base.pg_dsn 与 base.api_csrf_tokens
  */
-function writeConfig($dbName, array $apiTokens)
+function writeConfig($dbName, array $apiTokens, $pgDsn = '')
 {
     $errors = [];
     $content = @file_get_contents(Config::configFile());
@@ -226,13 +323,29 @@ function writeConfig($dbName, array $apiTokens)
         return $errors;
     }
     $changed = [];
-    $escaped = addslashes($dbName);
-    $patched = preg_replace("/('database'\s*=>\s*)'[^']*'/", '$1\'' . $escaped . '\'', $content, 1, $count);
-    if ($count === 1) {
-        $content = $patched;
-        $changed[] = 'database';
+    if ($pgDsn !== '') {
+        $escaped = addslashes($pgDsn);
+        if (preg_match("/'pg_dsn'\s*=>/", $content)) {
+            $content = preg_replace("/('pg_dsn'\s*=>\s*)'[^']*'/", '$1\'' . $escaped . '\'', $content, 1, $count);
+            if ($count === 1) $changed[] = 'pg_dsn';
+        } else {
+            $content = preg_replace("/('database'\s*=>\s*'[^']*',)/", "$1\n            'pg_dsn' => '" . $escaped . "',", $content, 1, $count);
+            if ($count === 1) $changed[] = 'pg_dsn';
+        }
     } else {
-        $errors[] = 'global_config.php 中未找到 base.database 配置项';
+        $escaped = addslashes($dbName);
+        $patched = preg_replace("/('database'\s*=>\s*)'[^']*'/", '$1\'' . $escaped . '\'', $content, 1, $count);
+        if ($count === 1) {
+            $content = $patched;
+            $changed[] = 'database';
+        } else {
+            $errors[] = 'global_config.php 中未找到 base.database 配置项';
+        }
+        // 清空 pg_dsn
+        if (preg_match("/'pg_dsn'\s*=>/", $content)) {
+            $content = preg_replace("/\s*'pg_dsn'\s*=>\s*'[^']*',\n?/", "", $content, 1);
+            $changed[] = 'pg_dsn';
+        }
     }
     if (count($apiTokens) > 0) {
         $listExpr = var_export(array_values($apiTokens), true);
@@ -276,56 +389,73 @@ function writeConfig($dbName, array $apiTokens)
 /**
  * 执行安装/迁移
  */
-function runInstall($dbName, $adminUser, $adminPass, array $apiTokens)
+function runInstall($dbName, $adminUser, $adminPass, array $apiTokens, $pgDsn = '')
 {
-    $dbPath      = dbPath($dbName);
     $notes       = [];
     $migrated    = [];
 
-    $errors = writeConfig($dbName, $apiTokens);
+    $errors = writeConfig($dbName, $apiTokens, $pgDsn);
 
-    Config::overrideDbFile($dbPath);
+    if ($pgDsn !== '') {
+        $dbPath = $pgDsn;
+    } else {
+        $dbPath = dbPath($dbName);
+        Config::overrideDbFile($dbPath);
+    }
     Database::reset();
+    Config::reset();
     try {
         $db = Database::connection();
     } catch (\Throwable $e) {
         $errors[] = '打开数据库失败：' . $e->getMessage();
-        return [$errors, $notes, $migrated, $dbPath];
+        return [$errors, $notes, $migrated, $dbPath, []];
     }
 
-    foreach (businessTables() as $sql) {
-        $db->exec($sql);
-    }
-    \App\Repositories\TopicRepository::ensureTable();
-    \App\Repositories\KeywordRepository::ensureTable();
-    \App\Repositories\ArticleRepository::ensureTable();
+    $isPg = Database::isPg();
 
+    // PG: migratePg 已通过 Database::connection() 完成所有 DDL + seed，仅检查索引补建
+    // SQLite: 执行 businessTables() DDL，再通过 ensureTable 补建业务表
+    if (!$isPg) {
+        foreach (businessTables() as $sql) {
+            $db->exec($sql);
+        }
+        \App\Repositories\TopicRepository::ensureTable();
+        \App\Repositories\KeywordRepository::ensureTable();
+        \App\Repositories\ArticleRepository::ensureTable();
+    }
+
+    // 统计迁移前行数（兼容 PG + SQLite）
     $preSites     = 0;
     $preTopics    = 0;
     $preArticles  = 0;
     if (tableExists($db, 'siteops')) {
-        $preSites = (int)$db->querySingle('SELECT COUNT(*) FROM "siteops"');
+        $row = Database::fetchOne('SELECT COUNT(*) AS "c" FROM "siteops"');
+        $preSites = $row ? (int)$row['c'] : 0;
     }
     if (tableExists($db, 'sitetopic')) {
-        $preTopics = (int)$db->querySingle('SELECT COUNT(*) FROM "sitetopic"');
+        $row = Database::fetchOne('SELECT COUNT(*) AS "c" FROM "sitetopic"');
+        $preTopics = $row ? (int)$row['c'] : 0;
     }
     if (tableExists($db, 'article')) {
-        $preArticles = (int)$db->querySingle('SELECT COUNT(*) FROM "article"');
+        $row = Database::fetchOne('SELECT COUNT(*) AS "c" FROM "article"');
+        $preArticles = $row ? (int)$row['c'] : 0;
     }
 
+    // 补列（兼容 PG + SQLite）
     foreach (expectedColumns() as $table => $columns) {
         if (!tableExists($db, $table)) {
             continue;
         }
         $missing = missingColumns($db, $table, $columns);
         foreach ($missing as $column) {
-            $db->exec('ALTER TABLE "' . $db->escapeString($table) . '" ADD COLUMN "' . $db->escapeString($column) . '" VARCHAR');
+            Database::execute('ALTER TABLE "' . $table . '" ADD COLUMN "' . $column . '" VARCHAR');
         }
         if (count($missing) > 0) {
             $migrated[$table] = $missing;
         }
     }
 
+    // 补索引（兼容 PG + SQLite）
     $addedIndexes = [];
     foreach (expectedIndexes() as $table => $indexes) {
         if (!tableExists($db, $table)) {
@@ -333,7 +463,7 @@ function runInstall($dbName, $adminUser, $adminPass, array $apiTokens)
         }
         $missing = missingIndexes($db, $table, $indexes);
         foreach ($missing as $name => $sql) {
-            $db->exec($sql);
+            Database::execute($sql);
             $addedIndexes[$table][] = $name;
         }
     }
@@ -342,23 +472,27 @@ function runInstall($dbName, $adminUser, $adminPass, array $apiTokens)
         $notes[] = '检测到已有数据：siteops ' . $preSites . ' 行，sitetopic ' . $preTopics . ' 行，article ' . $preArticles . ' 行，已保留并迁移。';
     }
 
+    // 创建管理员（兼容 PG + SQLite，统一走 Database::fetchOne / Database::execute）
     if ($adminUser !== '' && $adminPass !== '') {
-        $count = (int)$db->querySingle('SELECT COUNT(*) FROM "users"');
+        $row = Database::fetchOne('SELECT COUNT(*) AS "c" FROM "users"');
+        $count = $row ? (int)$row['c'] : 0;
         if ($count === 0) {
             $hash = password_hash($adminPass, PASSWORD_DEFAULT);
             $now  = date('Y-m-d H:i:s');
-            $stmt = $db->prepare('INSERT INTO "users" ("username", "password_hash", "display_name", "status", "created_at", "updated_at") VALUES (:u, :p, :d, :s, :c, :u2)');
-            $stmt->bindValue(':u', $adminUser);
-            $stmt->bindValue(':p', $hash);
-            $stmt->bindValue(':d', $adminUser);
-            $stmt->bindValue(':s', 'active');
-            $stmt->bindValue(':c', $now);
-            $stmt->bindValue(':u2', $now);
-            $stmt->execute();
-            $userId = (int)$db->lastInsertRowID();
-            $adminRoleId = $db->querySingle("SELECT \"id\" FROM \"roles\" WHERE \"name\" = 'admin'");
-            if ($adminRoleId) {
-                $db->exec('INSERT OR IGNORE INTO "user_roles" ("user_id", "role_id") VALUES (' . (int)$userId . ', ' . (int)$adminRoleId . ')');
+            Database::execute(
+                'INSERT INTO "users" ("username", "password_hash", "display_name", "status", "created_at", "updated_at") VALUES (:u, :p, :d, :s, :c, :u2)',
+                [':u' => $adminUser, ':p' => $hash, ':d' => $adminUser, ':s' => 'active', ':c' => $now, ':u2' => $now]
+            );
+            // 取刚创建的用户 ID
+            $userRow = Database::fetchOne('SELECT "id" FROM "users" WHERE "username" = :u', [':u' => $adminUser]);
+            $userId = $userRow ? (int)$userRow['id'] : 0;
+            $roleRow = Database::fetchOne('SELECT "id" FROM "roles" WHERE "name" = :n', [':n' => 'admin']);
+            $adminRoleId = $roleRow ? (int)$roleRow['id'] : 0;
+            if ($userId > 0 && $adminRoleId > 0) {
+                Database::execute(
+                    'INSERT INTO "user_roles" ("user_id", "role_id") VALUES (:u, :r) ON CONFLICT DO NOTHING',
+                    [':u' => $userId, ':r' => $adminRoleId]
+                );
             }
             $notes[] = '管理员账号 ' . $adminUser . ' 已创建（拥有 admin 角色）。';
         } else {
@@ -382,6 +516,7 @@ $addedIndexes = [];
 $dbPath    = '';
 $wasInstalled = false;
 $installedAt  = is_file($lockFile) ? (string)@file_get_contents($lockFile) : '';
+$checks    = envChecks();
 
 if ($request === 'POST' && isset($_POST['do']) && $_POST['do'] === 'install') {
     $token = isset($_POST['install_token']) ? (string)$_POST['install_token'] : '';
@@ -389,7 +524,8 @@ if ($request === 'POST' && isset($_POST['do']) && $_POST['do'] === 'install') {
         $errors[] = '表单校验失败（CSRF token 无效），请刷新页面重试。';
     } elseif ($installedAt !== '') {
         $errors[] = '系统已安装（install.lock 存在）。如需重新安装/迁移，请先手工删除 ' . APP_PATH . '/install.lock 后刷新页面。';
-    } elseif (!in_array(false, array_column(envChecks(), 'ok'), true)) {
+    } elseif (!in_array(false, array_column(array_filter($checks, fn($c)=>!str_contains($c['label'],'pdo_pgsql')), 'ok'), true)) {
+        $dbType    = isset($_POST['db_type']) ? trim((string)$_POST['db_type']) : 'sqlite';
         $dbName    = isset($_POST['db_file']) ? trim((string)$_POST['db_file']) : 'sitedata.sqlite';
         $adminUser = isset($_POST['admin_user']) ? trim((string)$_POST['admin_user']) : '';
         $adminPass = isset($_POST['admin_pass']) ? (string)$_POST['admin_pass'] : '';
@@ -401,12 +537,31 @@ if ($request === 'POST' && isset($_POST['do']) && $_POST['do'] === 'install') {
                 $apiTokens[] = $t;
             }
         }
-        list($errors, $notes, $migrated, $dbPath, $addedIndexes) = runInstall($dbName, $adminUser, $adminPass, $apiTokens);
+        $pgDsn = '';
+        if ($dbType === 'pgsql') {
+            $pgDsn = trim((string)($_POST['pg_dsn'] ?? ''));
+            if ($pgDsn === '') {
+                $host = trim((string)($_POST['pg_host'] ?? '127.0.0.1'));
+                $port = trim((string)($_POST['pg_port'] ?? '5432'));
+                $dbname = trim((string)($_POST['pg_dbname'] ?? 'siteops'));
+                $user = trim((string)($_POST['pg_user'] ?? 'postgres'));
+                $pass = (string)($_POST['pg_pass'] ?? '');
+                if ($host !== '' && $dbname !== '' && $user !== '') {
+                    $pgDsn = 'pgsql:host=' . $host . ';port=' . $port . ';dbname=' . $dbname . ';user=' . $user;
+                    if ($pass !== '') $pgDsn .= ';password=' . $pass;
+                }
+            }
+            if ($pgDsn === '') {
+                $errors[] = 'PostgreSQL 需填写 DSN 或主机/库名/用户';
+            }
+        }
+        if (count($errors) === 0) {
+            list($errors, $notes, $migrated, $dbPath, $addedIndexes) = runInstall($dbName, $adminUser, $adminPass, $apiTokens, $pgDsn);
+        }
         $wasInstalled = true;
     }
 }
 
-$checks   = envChecks();
 $allOk    = !in_array(false, array_column($checks, 'ok'), true);
 $postName = isset($_POST['db_file']) ? trim((string)$_POST['db_file']) : '';
 $dbName   = $postName !== '' ? $postName : 'sitedata.sqlite';
@@ -516,12 +671,69 @@ li { font-size: 14px; margin: 3px 0; }
         <div class="alert alert-error" style="margin-top:14px">安装入口已锁定（install.lock 存在），请删除 <span class="mono">install.lock</span> 后刷新本页继续。</div>
       <?php else: ?>
         <h2 style="margin-top:26px">2. 数据库配置</h2>
-        <form method="post" action="install.php">
+        <form method="post" action="install.php" id="installForm">
           <input type="hidden" name="do" value="install">
           <input type="hidden" name="install_token" value="<?php echo ih($token); ?>">
-          <label for="db_file">数据库文件（相对本站目录，或绝对路径）</label>
-          <input type="text" id="db_file" name="db_file" value="<?php echo ih($dbName); ?>">
-          <div class="hint">建议保持默认 sitedata.sqlite。若选择新文件名将创建全新数据库。</div>
+          <label for="db_type">数据库类型</label>
+          <select id="db_type" name="db_type" class="form-control" style="padding:9px 12px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; width:100%;">
+            <option value="sqlite" selected>SQLite（默认，零配置，适合单机）</option>
+            <option value="pgsql">PostgreSQL（推荐，适合并发/大数据，需 pdo_pgsql）</option>
+          </select>
+          <div id="sqlite_opts" style="margin-top:12px;">
+            <label for="db_file">SQLite 数据库文件（相对本站目录，或绝对路径）</label>
+            <input type="text" id="db_file" name="db_file" value="<?php echo ih($dbName); ?>">
+            <div class="hint">建议保持默认 sitedata.sqlite。若选择新文件名将创建全新数据库。</div>
+          </div>
+          <div id="pgsql_opts" style="display:none; margin-top:12px; border:1px dashed #bfdbfe; padding:12px; border-radius:6px; background:#f8fafc;">
+            <label for="pg_dsn">PostgreSQL DSN（或 DATABASE_URL）</label>
+            <input type="text" id="pg_dsn" name="pg_dsn" placeholder="pgsql:host=127.0.0.1;port=5432;dbname=siteops;user=postgres;password=secret">
+            <div class="hint">示例：<span class="mono">pgsql:host=127.0.0.1;port=5432;dbname=siteops</span> 或 <span class="mono">postgres://user:pass@host:5432/db</span>。留空则使用下方分项配置。</div>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+              <div style="flex:1"><label for="pg_host">Host</label><input type="text" id="pg_host" name="pg_host" placeholder="127.0.0.1"></div>
+              <div style="flex:0 0 100px"><label for="pg_port">Port</label><input type="text" id="pg_port" name="pg_port" placeholder="5432"></div>
+            </div>
+            <label for="pg_dbname">Database</label><input type="text" id="pg_dbname" name="pg_dbname" placeholder="siteops">
+            <div style="display:flex; gap:8px;">
+              <div style="flex:1"><label for="pg_user">User</label><input type="text" id="pg_user" name="pg_user" placeholder="postgres"></div>
+              <div style="flex:1"><label for="pg_pass">Password</label><input type="password" id="pg_pass" name="pg_pass" placeholder=""></div>
+            </div>
+            <div class="hint" style="margin-top:8px;">配置将写入 <span class="mono">APP_DB_DSN</span> 环境变量或 <span class="mono">global_config.php base.pg_dsn</span>，优先级高于 SQLite 文件。</div>
+            <button type="button" id="pgTestBtn" style="margin-top:10px; padding:7px 18px; font-size:13px; font-weight:600; color:#fff; background:#059669; border:0; border-radius:5px; cursor:pointer;">测试连接与权限</button>
+            <div id="pgTestResult" style="margin-top:8px; font-size:13px; display:none;"></div>
+          </div>
+          <script>
+            (function(){
+              var sel=document.getElementById('db_type'), a=document.getElementById('sqlite_opts'), b=document.getElementById('pgsql_opts');
+              function tog(){ if(sel.value==='pgsql'){a.style.display='none'; b.style.display='block';} else {a.style.display='block'; b.style.display='none'; } }
+              sel.addEventListener('change', tog); tog();
+
+              var btn=document.getElementById('pgTestBtn'), res=document.getElementById('pgTestResult');
+              if(btn) btn.addEventListener('click', function(){
+                btn.disabled=true; btn.textContent='测试中…'; res.style.display='block'; res.innerHTML='';
+                var fd=new FormData();
+                fd.append('do','test_pg');
+                fd.append('dsn', document.getElementById('pg_dsn').value||'');
+                fd.append('host', document.getElementById('pg_host').value||'');
+                fd.append('port', document.getElementById('pg_port').value||'');
+                fd.append('dbname', document.getElementById('pg_dbname').value||'');
+                fd.append('user', document.getElementById('pg_user').value||'');
+                fd.append('pass', document.getElementById('pg_pass').value||'');
+                fetch('install.php',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
+                  var html=j.ok?'<span style="color:#16a34a;font-weight:600">✓ '+j.msg+'</span>':'<span style="color:#dc2626;font-weight:600">✗ '+j.msg+'</span>';
+                  if(j.checks) j.checks.forEach(function(c){
+                    var icon=c.ok?'<span style="color:#16a34a">✓</span>':'<span style="color:#dc2626">✗</span>';
+                    html+='<br>'+icon+' '+c.label;
+                    if(c.hint) html+='<span style="color:#6b7280;margin-left:6px">('+c.hint+')</span>';
+                  });
+                  res.innerHTML=html;
+                  btn.disabled=false; btn.textContent='测试连接与权限';
+                }).catch(function(e){
+                  res.innerHTML='<span style="color:#dc2626">请求失败：'+e+'</span>';
+                  btn.disabled=false; btn.textContent='测试连接与权限';
+                });
+              });
+            })();
+          </script>
 
           <h2 style="margin-top:18px">3. 管理员账号（可选）</h2>
           <label for="admin_user">管理员用户名</label>

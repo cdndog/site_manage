@@ -72,7 +72,7 @@
       function publishCtxFormatter(value) {
         if (!value) return '';
         var s = String(value);
-        return '<span class="mono" title="'+s.replace(/"/g,'&quot;')+'">'+s.substring(0,12)+'...</span>';
+        return '<span class="mono" title="'+s.replace(/"/g,'&quot;')+'">'+s.substring(0,32)+'...</span>';
       }
       function publishOpFormatter(value, row) {
         var id = String(row.ctx_id||'').replace(/'/g,'');

@@ -81,36 +81,91 @@ class SiteService
         ];
     }
 
+    /**
+     * post_* 字段 -> sitetopic/siteops.json 镜像键的映射。
+     * 第二项为 true 表示该值需先 strip_tags + htmlspecialchars。
+     * buildSiteJson（整行）与 buildJsonForPartial（部分更新）共用此表，
+     * 保证两条路径产出的 json 结构一致。
+     */
+    const JSON_FIELD_MAP = [
+        'git_name' => 'post_gitname',
+        'post_uuid' => 'post_uuid',
+        'git_account' => 'post_gitaccount',
+        'domain' => 'post_domain',
+        'site_title' => ['post_sitetitle', true],
+        'site_logo' => 'post_sitelogo',
+        'languages' => 'post_lang',
+        'sns_id' => 'post_sns_id',
+        'topnav_menus' => 'post_topnavmenus',
+        'keyword' => 'post_keyword',
+        'theme_name' => 'post_gitname',
+        'theme_type' => 'post_themetype',
+        'site_type' => 'post_sitetype',
+        'sitedir' => 'post_sitedir',
+        'deploy' => 'post_sitedeploy',
+        'hostip' => 'post_sitehostip',
+        'local_deploy' => 'local_deploy',
+        'local_hostip' => 'local_hostip',
+        'site_subtitle' => ['post_description', true],
+        'status' => 'post_status',
+    ];
+
+    /**
+     * json 镜像键 -> siteops 列名。供部分更新后重算 json 使用。
+     * 保持与 buildSiteJson 一致的取值来源（theme_name 沿用历史行为取 git_name）。
+     */
+    const JSON_COLUMN_MAP = [
+        'git_name' => 'git_name',
+        'git_account' => 'git_account',
+        'domain' => 'domain',
+        'site_title' => 'site_title',
+        'site_subtitle' => 'site_subtitle',
+        'site_logo' => 'site_logo',
+        'languages' => 'languages',
+        'sns_id' => 'sns_id',
+        'topnav_menus' => 'topnav_menus',
+        'keyword' => 'keyword',
+        'theme_name' => 'git_name',
+        'theme_type' => 'theme_type',
+        'sitedir' => 'sitedir',
+        'deploy' => 'deploy',
+        'hostip' => 'hostip',
+        'local_deploy' => 'local_deploy',
+        'local_hostip' => 'local_hostip',
+        'status' => 'status',
+    ];
+
     public static function buildSiteJson(array $post)
     {
         $siteJson = json_decode(isset($post['post_json']) ? $post['post_json'] : '', true);
         if (!is_array($siteJson)) {
             $siteJson = [];
         }
-        $pick = function (array $post, $key) {
-            return isset($post[$key]) ? $post[$key] : null;
-        };
-        $siteJson['git_name'] = $pick($post, 'post_gitname');
-        $siteJson['post_uuid'] = $pick($post, 'post_uuid');
-        $siteJson['git_account'] = $pick($post, 'post_gitaccount');
-        $siteJson['domain'] = $pick($post, 'post_domain');
-        $siteJson['site_title'] = htmlspecialchars(strip_tags((string)$pick($post, 'post_sitetitle')));
-        $siteJson['site_logo'] = $pick($post, 'post_sitelogo');
-        $siteJson['languages'] = $pick($post, 'post_lang');
-        $siteJson['sns_id'] = $pick($post, 'post_sns_id');
-        $siteJson['topnav_menus'] = $pick($post, 'post_topnavmenus');
-        $siteJson['keyword'] = $pick($post, 'post_keyword');
-        $siteJson['theme_name'] = $pick($post, 'post_gitname');
-        $siteJson['theme_type'] = $pick($post, 'post_themetype');
-        $siteJson['site_type'] = $pick($post, 'post_sitetype');
-        $siteJson['sitedir'] = $pick($post, 'post_sitedir');
-        $siteJson['deploy'] = $pick($post, 'post_sitedeploy');
-        $siteJson['hostip'] = $pick($post, 'post_sitehostip');
-        $siteJson['local_deploy'] = $pick($post, 'local_deploy');
-        $siteJson['local_hostip'] = $pick($post, 'local_hostip');
-        $siteJson['site_subtitle'] = htmlspecialchars(strip_tags((string)$pick($post, 'post_description')));
-        $siteJson['status'] = $pick($post, 'post_status');
+        foreach (self::JSON_FIELD_MAP as $jsonKey => $spec) {
+            $postKey = is_array($spec) ? $spec[0] : $spec;
+            $sanitize = is_array($spec) && !empty($spec[1]);
+            $value = isset($post[$postKey]) ? $post[$postKey] : null;
+            $siteJson[$jsonKey] = $sanitize
+                ? htmlspecialchars(strip_tags((string)$value))
+                : $value;
+        }
         return $siteJson;
+    }
+
+    /**
+     * 部分更新后按合并结果重算 json 镜像。
+     *
+     * 入参是 buildContent 产出的列数组（值已完成 strip_tags/htmlspecialchars），
+     * 因此这里不再重复转义，避免二次转义。json 专属键
+     * （site_type / post_uuid 等不落列的字段）从 $existingJson 保留。
+     */
+    public static function buildJsonForPartial(array $mergedContent, array $existingJson)
+    {
+        $siteJson = $existingJson;
+        foreach (self::JSON_COLUMN_MAP as $jsonKey => $column) {
+            $siteJson[$jsonKey] = isset($mergedContent[$column]) ? $mergedContent[$column] : '';
+        }
+        return json_encode($siteJson);
     }
 
     public static function buildContent(array $post, array $siteJson)

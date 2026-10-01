@@ -10,22 +10,33 @@ class AigcStatusRepository
 
     public static function ensureTable()
     {
+        if (Database::isPg()) {
+            Database::connection()->exec('CREATE TABLE IF NOT EXISTS "aigc_status" ('
+                . '"ctx_id" TEXT PRIMARY KEY, "keyword" TEXT, "lang" TEXT, "pubdomain" TEXT, "createAt" TEXT, "publishAt" TEXT, "search_text" TEXT)');
+            $hasSearch = Database::fetchOne("SELECT 1 FROM information_schema.columns WHERE table_name='aigc_status' AND column_name='search_text'");
+            if ($hasSearch === null) {
+                Database::connection()->exec('ALTER TABLE "aigc_status" ADD COLUMN IF NOT EXISTS "search_text" TEXT');
+            }
+            Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_publishAt" ON "aigc_status" ("publishAt" DESC)');
+            Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_pubdomain" ON "aigc_status" ("pubdomain")');
+            Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_lang" ON "aigc_status" ("lang")');
+            Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_keyword" ON "aigc_status" ("keyword")');
+            Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_search" ON "aigc_status" ("search_text")');
+            return;
+        }
         Database::connection()->exec('CREATE TABLE IF NOT EXISTS "aigc_status" ('
-            . '"ctx_id" TEXT PRIMARY KEY, "keyword" TEXT, "lang" TEXT, "pubdomain" TEXT, "createAt" TEXT, "publishAt" TEXT'
+            . '"ctx_id" TEXT PRIMARY KEY, "keyword" TEXT, "lang" TEXT, "pubdomain" TEXT, "createAt" TEXT, "publishAt" TEXT, "search_text" TEXT'
             . ') WITHOUT ROWID');
         Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_publishAt" ON "aigc_status" ("publishAt" DESC)');
         Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_pubdomain" ON "aigc_status" ("pubdomain")');
         Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_lang" ON "aigc_status" ("lang")');
         Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_keyword" ON "aigc_status" ("keyword")');
-        // 全列检索加速：单列 LIKE 替代 6 列 OR，前导 % 仍 SCAN 但 I/O 减半且可被索引覆盖
         $hasSearch = Database::connection()->querySingle('SELECT 1 FROM pragma_table_info("aigc_status") WHERE name="search_text"');
         if (!$hasSearch) {
             Database::connection()->exec('ALTER TABLE "aigc_status" ADD COLUMN "search_text" TEXT');
             Database::connection()->exec('UPDATE "aigc_status" SET "search_text"=lower("ctx_id"||"|"||"keyword"||"|"||"lang"||"|"||"pubdomain"||"|"||"createAt"||"|"||"publishAt")');
         }
         Database::connection()->exec('CREATE INDEX IF NOT EXISTS "idx_aigc_search" ON "aigc_status" ("search_text")');
-        Database::connection()->exec('CREATE TRIGGER IF NOT EXISTS "trg_aigc_search_upsert" AFTER INSERT ON "aigc_status" BEGIN UPDATE "aigc_status" SET "search_text"=lower(new."ctx_id"||"|"||new."keyword"||"|"||new."lang"||"|"||new."pubdomain"||"|"||new."createAt"||"|"||new."publishAt") WHERE "ctx_id"=new."ctx_id"; END');
-        Database::connection()->exec('CREATE TRIGGER IF NOT EXISTS "trg_aigc_search_update" AFTER UPDATE ON "aigc_status" BEGIN UPDATE "aigc_status" SET "search_text"=lower(new."ctx_id"||"|"||new."keyword"||"|"||new."lang"||"|"||new."pubdomain"||"|"||new."createAt"||"|"||new."publishAt") WHERE "ctx_id"=new."ctx_id"; END');
     }
 
     public static function search($search, $page, $perPage, $sort = 'publishAt', $order = 'desc')

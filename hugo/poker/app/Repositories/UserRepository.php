@@ -106,6 +106,9 @@ class UserRepository
         $statement->bindValue(':created_at', $now);
         $statement->bindValue(':updated_at', $now);
         $statement->execute();
+        if (Database::isPg()) {
+            return (int)$db->lastInsertId('users_id_seq');
+        }
         return (int)$db->lastInsertRowID();
     }
 
@@ -134,23 +137,48 @@ class UserRepository
             return;
         }
         $db = Database::connection();
-        $db->exec('DELETE FROM "user_roles" WHERE "user_id" = ' . $id);
-        $db->exec('DELETE FROM "users" WHERE "id" = ' . $id);
+        if (Database::isPg()) {
+            $db->beginTransaction();
+        } else {
+            $db->exec('BEGIN');
+        }
+        try {
+            Database::execute('DELETE FROM "user_roles" WHERE "user_id" = :uid', [':uid' => $id]);
+            Database::execute('DELETE FROM "users" WHERE "id" = :id', [':id' => $id]);
+            if (Database::isPg()) {
+                $db->commit();
+            } else {
+                $db->exec('COMMIT');
+            }
+        } catch (\Exception $e) {
+            if (Database::isPg()) {
+                $db->rollBack();
+            } else {
+                $db->exec('ROLLBACK');
+            }
+            throw $e;
+        }
     }
 
     public static function setRoles($userId, array $roleIds)
     {
         $userId = (int)$userId;
-        $db = Database::connection();
-        $db->exec('DELETE FROM "user_roles" WHERE "user_id" = ' . $userId);
-        $statement = $db->prepare('INSERT OR IGNORE INTO "user_roles" ("user_id", "role_id") VALUES (:uid, :rid)');
+        Database::execute('DELETE FROM "user_roles" WHERE "user_id" = :uid', [':uid' => $userId]);
         foreach (array_unique(array_map('intval', $roleIds)) as $roleId) {
             if ($roleId <= 0) {
                 continue;
             }
-            $statement->bindValue(':uid', $userId);
-            $statement->bindValue(':rid', $roleId);
-            $statement->execute();
+            $exists = Database::fetchOne(
+                'SELECT 1 FROM "user_roles" WHERE "user_id" = :uid AND "role_id" = :rid LIMIT 1',
+                [':uid' => $userId, ':rid' => $roleId]
+            );
+            if ($exists !== null) {
+                continue;
+            }
+            Database::execute(
+                'INSERT INTO "user_roles" ("user_id", "role_id") VALUES (:uid, :rid)',
+                [':uid' => $userId, ':rid' => $roleId]
+            );
         }
     }
 

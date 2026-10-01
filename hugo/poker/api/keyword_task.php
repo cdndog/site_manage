@@ -53,8 +53,10 @@ if ($q === 'all') {
     );
 } else {
     // t 可为任意列的值：ctx_id/keyword/git_name/pubdir/status/lang/geo/lasttask/json
+    // PG：json 列为 JSONB，需 ::text 转型才能 ILIKE
+    $jsonLike = Database::isPg() ? '"json"::text ILIKE :like' : '"json" LIKE :like';
     $rows = Database::fetchAll(
-        'SELECT * FROM "keywordmonitorlist" WHERE ("ctx_id" = :q OR "keyword" = :q OR "git_name" = :q OR "pubdir" = :q OR "status" = :q2 OR "lang" = :q OR "geo" = :q OR "lasttask" = :q OR "json" LIKE :like)'
+        'SELECT * FROM "keywordmonitorlist" WHERE ("ctx_id" = :q OR "keyword" = :q OR "git_name" = :q OR "pubdir" = :q OR "status" = :q2 OR "lang" = :q OR "geo" = :q OR "lasttask" = :q OR ' . $jsonLike . ')'
         . ' AND (json_extract("json", \'$.lasttask\') IS NULL OR json_extract("json", \'$.lasttask\') != :today)'
         . ' ORDER BY RANDOM() LIMIT 1',
         ['q' => $q, 'q2' => $q, 'like' => '%' . $q . '%', 'today' => $time]

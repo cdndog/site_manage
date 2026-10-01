@@ -38,6 +38,23 @@ class KeywordService
         ];
     }
 
+    /**
+     * 由各列值生成 keywordmonitorlist.json 镜像字段。
+     * 部分更新后需用它按合并结果重算，保证 json 列与各列不脱节。
+     */
+    public static function buildJson(array $fields)
+    {
+        return json_encode([
+            'keyword' => isset($fields['keyword']) ? $fields['keyword'] : '',
+            'git_name' => isset($fields['git_name']) ? $fields['git_name'] : '',
+            'pubdir' => isset($fields['pubdir']) ? $fields['pubdir'] : '',
+            'status' => isset($fields['status']) ? $fields['status'] : '',
+            'lang' => isset($fields['lang']) ? $fields['lang'] : '',
+            'geo' => isset($fields['geo']) ? $fields['geo'] : '',
+            'lasttask' => isset($fields['lasttask']) ? $fields['lasttask'] : '',
+        ]);
+    }
+
     public static function buildRecords(array $post)
     {
         $records = [];
@@ -63,25 +80,21 @@ class KeywordService
             }
             $record = $base;
             $record['keyword'] = $keyword;
-            $record['json'] = json_encode([
-                'keyword' => $keyword,
-                'git_name' => $base['git_name'],
-                'pubdir' => $base['pubdir'],
-                'status' => $base['status'],
-                'lang' => $base['lang'],
-                'geo' => $base['geo'],
-                'lasttask' => $base['lasttask'],
-            ]);
+            $record['json'] = self::buildJson($record);
             $records[] = $record;
         }
         return $records;
     }
 
-    public static function saveAll(array $records)
+    /**
+     * $providedColumns 为 null 时保持历史行为（整行覆盖）；
+     * 传入列名数组时仅更新这些列，未传列沿用库中原值。
+     */
+    public static function saveAll(array $records, ?array $providedColumns = null)
     {
         $saved = [];
         foreach ($records as $record) {
-            $saved[] = KeywordRepository::upsertByKeyword($record);
+            $saved[] = KeywordRepository::upsertByKeyword($record, $providedColumns);
         }
         return $saved;
     }
@@ -107,6 +120,6 @@ class KeywordService
             }
             $lines[] = implode('|', $parts);
         }
-        file_put_contents(Config::dataDir() . '/keyword_monitor_list.txt', implode(PHP_EOL, $lines));
+        @file_put_contents(Config::dataDir() . '/keyword_monitor_list.txt', implode(PHP_EOL, $lines));
     }
 }

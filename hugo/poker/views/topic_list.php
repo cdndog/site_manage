@@ -2,9 +2,10 @@
   <div class="card card-sops">
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
       <h1 class="h5 mb-0 page-title"><i class="bi bi-journal-richtext mr-2" aria-hidden="true"></i>话题列表</h1>
-      <div>
+      <div class="d-flex align-items-center" style="gap:6px;">
         <a class="btn btn-sm btn-outline-secondary" href="topicops.php"><i class="bi bi-plus-circle mr-1" aria-hidden="true"></i>新增话题</a>
         <a class="btn btn-sm btn-outline-secondary" href="topictable.php"><i class="bi bi-bar-chart-line mr-1" aria-hidden="true"></i>话题报表</a>
+        <button class="btn btn-sm btn-outline-warning" type="button" id="importTopicBtn" title="从 topic_monitor_list.txt 恢复话题数据"><i class="bi bi-cloud-download mr-1" aria-hidden="true"></i>话题导入</button>
       </div>
     </div>
     <div class="card-body">
@@ -44,6 +45,17 @@
         return html;
       }
 
+      function sopsParseJson(text) {
+        text = String(text || '');
+        try { return JSON.parse(text); } catch (e) {}
+        var s = text.indexOf('{');
+        var e2 = text.lastIndexOf('}');
+        if (s !== -1 && e2 > s) {
+          try { return JSON.parse(text.slice(s, e2 + 1)); } catch (e3) {}
+        }
+        return null;
+      }
+
       var topicDeleteTarget = null;
       function topicDeleteConfirm(btn, ctxId, label) {
         topicDeleteTarget = ctxId;
@@ -62,8 +74,7 @@
         xhr.onreadystatechange = function () {
           if (xhr.readyState === 4) {
             if (xhr.status === 200) {
-              var resp = null;
-              try { resp = JSON.parse(xhr.responseText); } catch (e) {}
+              var resp = sopsParseJson(xhr.responseText);
               var ok = resp && resp.rows && resp.rows[0] && resp.rows[0].ok;
               if (ok) {
                 if (window.jQuery && window.jQuery.fn && window.jQuery.fn.bootstrapTable) {
@@ -180,3 +191,43 @@
   </div>
 </div>
 <?php endif; ?>
+<div class="modal fade" id="topicImportModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title"><i class="bi bi-cloud-download text-warning mr-1"></i>话题导入</h5><button type="button" class="close" data-dismiss="modal"><span>&times;</span></button></div>
+      <div class="modal-body">
+        <p>将从 topic_monitor_list.txt 恢复话题数据到数据库，已存在的记录将跳过。</p>
+        <p class="text-muted small mb-0">导入后自动刷新列表。</p>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button><button type="button" class="btn btn-warning" id="topicImportExecuteBtn"><i class="bi bi-cloud-download mr-1"></i>确定导入</button></div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var btn=document.getElementById('importTopicBtn');
+  var modal=document.getElementById('topicImportModal');
+  var exec=document.getElementById('topicImportExecuteBtn');
+  if(!btn||!modal||!exec) return;
+  btn.addEventListener('click',function(){window.jQuery(modal).modal('show');});
+  exec.addEventListener('click',function(){
+    exec.disabled=true;exec.innerHTML='<i class="bi bi-arrow-repeat mr-1"></i>导入中…';
+    var csrf='<?php echo e(isset($csrf_token) ? $csrf_token : ""); ?>';
+    var xhr=new XMLHttpRequest();
+    xhr.open('POST','topiclist.php',true);
+    xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+    xhr.onreadystatechange=function(){
+      if(xhr.readyState!==4) return;
+      exec.disabled=false;exec.innerHTML='<i class="bi bi-cloud-download mr-1"></i>确定导入';
+      window.jQuery(modal).modal('hide');
+      var msg='导入失败',isError=true;
+      if(xhr.status===200){var resp=sopsParseJson(xhr.responseText);
+        if(resp&&resp.rows&&resp.rows[0]){msg=resp.rows[0].message||'导入完成';isError=resp.rows[0].ok===false;}
+      }
+      sopsToast(msg,isError?'danger':'success');
+      if(window.jQuery&&window.jQuery.fn&&window.jQuery.fn.bootstrapTable) jQuery('#table').bootstrapTable('refresh');
+    };
+    xhr.send('action=import-topic&csrf_token='+encodeURIComponent(csrf));
+  });
+})();
+</script>

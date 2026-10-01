@@ -7,7 +7,7 @@
  *   - wechat_forwarded_for / proxy / connect_timeout / timeout / max_retries：按需覆盖
  */
 return [
-    'cookie' => '1111',
+    'cookie' => 'wechat_mp_cookie',
     'http_headers' => array (
   0 => 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
   1 => 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',

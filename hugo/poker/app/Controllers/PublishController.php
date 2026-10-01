@@ -119,6 +119,8 @@ class PublishController
             return;
         }
         $imported = 0; $updated = 0; $missing = 0;
+        // 批量收集所有待写入记录，一次性查询已有 ctx_id
+        $allRecords = [];
         foreach ($items as $it) {
             $ctxId = trim((string)($it['ctx_id'] ?? ''));
             if ($ctxId === '') continue;
@@ -129,40 +131,75 @@ class PublishController
             if (!is_array($j) || empty($j['post_uuid'])) continue;
             $rep = \App\Services\ArticleService::datareportFormat($j);
             if (empty($rep)) { $missing++; continue; }
-            $exists = \App\Database::fetchOne('SELECT 1 FROM "aigc_status" WHERE "ctx_id"=:c', [':c'=>$ctxId]);
-            \App\Database::execute(
-                'INSERT OR REPLACE INTO "aigc_status" ("ctx_id","keyword","lang","pubdomain","createAt","publishAt") VALUES (:c,:k,:l,:p,:ca,:pa)',
-                [':c'=>$rep['ctx_id'],':k'=>$rep['keyword'],':l'=>$rep['lang'],':p'=>$rep['pubdomain'],':ca'=>$rep['createAt'],':pa'=>$rep['publishAt']]
-            );
-            if ($exists) $updated++; else $imported++;
+            $allRecords[] = ['ctx_id'=>$rep['ctx_id'],'keyword'=>$rep['keyword'],'lang'=>$rep['lang'],'pubdomain'=>$rep['pubdomain'],'createAt'=>$rep['createAt'],'publishAt'=>$rep['publishAt']];
         }
-        // 额外扫描 json 目录中不在 aigc_status 或已覆盖的文件（基于 ctx_id 覆盖）
+        // 额外扫描 json 目录
         if (is_dir($jsonDir)) {
+            $handledIds = array_flip(array_map(function ($it) { return trim((string)($it['ctx_id'] ?? '')); }, $items));
             foreach (glob($jsonDir.'/*.json') as $jf) {
                 $id = basename($jf, '.json');
-                // 若已在 aigc_status.json 中处理过则跳过，避免重复计数
-                $handled = false;
-                foreach ($items as $it2) if (trim((string)($it2['ctx_id'] ?? '')) === $id) { $handled = true; break; }
-                if ($handled) continue;
+                if (isset($handledIds[$id])) continue;
                 $j = json_decode((string)file_get_contents($jf), true);
                 if (is_array($j) && isset($j[0]) && is_array($j[0])) $j = $j[0];
                 if (!is_array($j) || empty($j['post_uuid'])) continue;
                 $rep = \App\Services\ArticleService::datareportFormat($j);
                 if (empty($rep)) continue;
-                $exists = \App\Database::fetchOne('SELECT 1 FROM "aigc_status" WHERE "ctx_id"=:c', [':c'=>$id]);
+                $allRecords[] = ['ctx_id'=>$rep['ctx_id'],'keyword'=>$rep['keyword'],'lang'=>$rep['lang'],'pubdomain'=>$rep['pubdomain'],'createAt'=>$rep['createAt'],'publishAt'=>$rep['publishAt']];
+            }
+        }
+        // 批量查询已有 ctx_id，一次性判断 insert/update
+        $existingIds = [];
+        if (count($allRecords) > 0) {
+            $allCtxIds = array_unique(array_map(function ($r) { return $r['ctx_id']; }, $allRecords));
+            $chunks = array_chunk($allCtxIds, 5000);
+            foreach ($chunks as $chunk) {
+                $params = [];
+                $placeholders = [];
+                foreach ($chunk as $i => $val) {
+                    $key = ':c' . $i;
+                    $placeholders[] = $key;
+                    $params[$key] = $val;
+                }
+                $rows = \App\Database::fetchAll('SELECT "ctx_id" FROM "aigc_status" WHERE "ctx_id" IN (' . implode(',', $placeholders) . ')', $params);
+                foreach ($rows as $row) { $existingIds[$row['ctx_id']] = true; }
+            }
+        }
+        // 批量写入（单事务）
+        $db = \App\Database::connection();
+        $isPg = \App\Database::isPg();
+        if ($isPg) { $db->beginTransaction(); } else { $db->exec('BEGIN'); }
+        try {
+            foreach ($allRecords as $rep) {
+                $exists = isset($existingIds[$rep['ctx_id']]);
                 \App\Database::execute(
-                    'INSERT OR REPLACE INTO "aigc_status" ("ctx_id","keyword","lang","pubdomain","createAt","publishAt") VALUES (:c,:k,:l,:p,:ca,:pa)',
+                    'INSERT INTO "aigc_status" ("ctx_id","keyword","lang","pubdomain","createAt","publishAt") VALUES (:c,:k,:l,:p,:ca,:pa) ON CONFLICT ("ctx_id") DO UPDATE SET "keyword"=EXCLUDED."keyword","lang"=EXCLUDED."lang","pubdomain"=EXCLUDED."pubdomain","createAt"=EXCLUDED."createAt","publishAt"=EXCLUDED."publishAt"',
                     [':c'=>$rep['ctx_id'],':k'=>$rep['keyword'],':l'=>$rep['lang'],':p'=>$rep['pubdomain'],':ca'=>$rep['createAt'],':pa'=>$rep['publishAt']]
                 );
                 if ($exists) $updated++; else $imported++;
             }
+            if ($isPg) { $db->commit(); } else { $db->exec('COMMIT'); }
+        } catch (\Throwable $e) {
+            if ($isPg) { $db->rollBack(); } else { $db->exec('ROLLBACK'); }
         }
-        // 刷新缓存
+        // 刷新缓存（分块写文件，避免内存溢出）
         try {
-            $rows = \App\Database::fetchAll('SELECT * FROM "aigc_status" ORDER BY "publishAt" DESC');
-            $f = $dataDir . '/seodata/aigc_status.json';
-            file_put_contents($f.'.tmp', json_encode($rows, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
-            @rename($f.'.tmp', $f);
+            $fp = @fopen($dataDir . '/seodata/aigc_status.json.tmp', 'w');
+            if ($fp !== false) {
+                fwrite($fp, '[');
+                $offset = 0; $chunkSize = 5000; $first = true;
+                do {
+                    $rows = \App\Database::fetchAll('SELECT * FROM "aigc_status" ORDER BY "publishAt" DESC LIMIT ' . $chunkSize . ' OFFSET ' . $offset);
+                    foreach ($rows as $row) {
+                        if (!$first) fwrite($fp, ',');
+                        fwrite($fp, json_encode($row, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+                        $first = false;
+                    }
+                    $offset += $chunkSize;
+                } while (count($rows) === $chunkSize);
+                fwrite($fp, ']');
+                fclose($fp);
+                @rename($dataDir . '/seodata/aigc_status.json.tmp', $dataDir . '/seodata/aigc_status.json');
+            }
         } catch (\Throwable $e) {}
         $msg = "导入完成：新增 $imported 条，覆盖更新 $updated 条，JSON 缺失 $missing 条";
         self::emitJson(['total'=>1,'rows'=>[['ok'=>true,'message'=>$msg]]]);

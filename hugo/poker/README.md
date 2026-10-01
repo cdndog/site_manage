@@ -159,7 +159,7 @@ location ~ \.php$ {
    `ctx_id|git_name|git_account|status|theme_type|languages|domain|sns_id|topnav_menus|site_title|site_subtitle|json`
 3. **导出文件** `keyword_monitor_list.txt`，每行 7 列（固定顺序）：
    `ctx_id|keyword|status|git_name|pubdir|lang|json`
-4. **下游消费者**：`seo_report.php`（报表）、`sitequery.php`（status=done + json 展开）、`topicedit.php` / `topicops.php`（下拉）、`keywordops.php`（站点下拉）等
+4. **下游消费者**：`seo_report.php`（报表）、`sitequery.php`（status=done + json 展开）、`topicops.php`（下拉）、`keywordops.php`（站点下拉）等
 5. **备份文件**：`sitebulkops/{ctx_id}.json`（siteops 表 json 列）、`keywordmonitor/{ctx_id}.json`（keywordmonitorlist 表 json 列）
 
 ## 7. 功能测试

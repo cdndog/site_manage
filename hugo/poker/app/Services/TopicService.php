@@ -39,6 +39,24 @@ class TopicService
         ];
     }
 
+    /**
+     * 由各列值生成 sitetopic.json 镜像字段。
+     * 部分更新后需用它按合并结果重算，保证 json 列与各列不脱节。
+     */
+    public static function buildJson(array $fields)
+    {
+        return json_encode([
+            'git_name' => isset($fields['git_name']) ? $fields['git_name'] : '',
+            'domain' => isset($fields['domain']) ? $fields['domain'] : '',
+            'keyword' => isset($fields['keyword']) ? $fields['keyword'] : '',
+            'pubdir' => isset($fields['pubdir']) ? $fields['pubdir'] : '',
+            'status' => isset($fields['status']) ? $fields['status'] : '',
+            'lang' => isset($fields['lang']) ? $fields['lang'] : '',
+            'geo' => isset($fields['geo']) ? $fields['geo'] : '',
+            'lasttask' => isset($fields['lasttask']) ? $fields['lasttask'] : '',
+        ], JSON_UNESCAPED_UNICODE);
+    }
+
     public static function buildRecords(array $post)
     {
         $records = [];
@@ -66,26 +84,21 @@ class TopicService
             $record = $base;
             $record['keyword'] = $keyword;
             $record['ctx_id'] = $bulk ? str_replace('.', '', uniqid(time(), true)) : $ctxId;
-            $record['json'] = json_encode([
-                'git_name' => $base['git_name'],
-                'domain' => $base['domain'],
-                'keyword' => $keyword,
-                'pubdir' => $base['pubdir'],
-                'status' => $base['status'],
-                'lang' => $base['lang'],
-                'geo' => $base['geo'],
-                'lasttask' => $base['lasttask'],
-            ], JSON_UNESCAPED_UNICODE);
+            $record['json'] = self::buildJson($base + ['keyword' => $keyword]);
             $records[] = $record;
         }
         return $records;
     }
 
-    public static function saveAll(array $records)
+    /**
+     * $providedColumns 为 null 时保持历史行为（整行覆盖）；
+     * 传入列名数组时仅更新这些列，未传列沿用库中原值。
+     */
+    public static function saveAll(array $records, ?array $providedColumns = null)
     {
         $saved = [];
         foreach ($records as $record) {
-            $saved[] = TopicRepository::upsertByTopic($record);
+            $saved[] = TopicRepository::upsertByTopic($record, $providedColumns);
         }
         return $saved;
     }

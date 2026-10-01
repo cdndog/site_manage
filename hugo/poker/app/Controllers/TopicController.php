@@ -121,15 +121,60 @@ class TopicController
         Security::requireApiToken(true);
         Security::requirePermission('topic.view');
         $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
-        if ($method === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete-topic') {
-            self::handleTopicDelete();
-            return;
+        if ($method === 'POST' && isset($_POST['action'])) {
+            if ($_POST['action'] === 'delete-topic') {
+                self::handleTopicDelete();
+                return;
+            }
+            if ($_POST['action'] === 'import-topic') {
+                self::handleTopicImport();
+                return;
+            }
         }
         $data = self::listData();
         if ($data === null) {
             return;
         }
         self::shell('话题列表', 'topic_list', $data);
+    }
+
+    private static function handleTopicImport()
+    {
+        Security::requirePermission('topic.manage');
+        if (!Security::csrfVerify(Security::requestToken())) {
+            self::emitJson(['total' => 1, 'rows' => [['ok' => false, 'message' => 'CSRF token invalid']]]);
+            return;
+        }
+        $file = \App\Config::dataDir() . '/topic_monitor_list.txt';
+        if (!is_file($file)) {
+            self::emitJson(['total' => 1, 'rows' => [['ok' => false, 'message' => 'topic_monitor_list.txt 不存在']]]);
+            return;
+        }
+        $lines = array_filter(file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES), function ($l) { return trim($l) !== ''; });
+        $records = [];
+        $failed = 0;
+        foreach ($lines as $line) {
+            $parts = explode('|', $line);
+            if (count($parts) < 8) { $failed++; continue; }
+            $json = json_decode($parts[7], true);
+            if (!is_array($json)) { $failed++; continue; }
+            $records[] = [
+                'ctx_id' => trim($parts[0]),
+                'keyword' => $parts[1],
+                'status' => $parts[2],
+                'git_name' => $parts[3],
+                'domain' => $parts[4],
+                'pubdir' => $parts[5],
+                'lang' => $parts[6],
+                'geo' => $json['geo'] ?? '',
+                'lasttask' => $json['lasttask'] ?? '',
+                'json' => $parts[7],
+            ];
+        }
+        $result = TopicRepository::batchImport($records);
+        $result['failed'] += $failed;
+        TopicService::export();
+        self::emitJson(['total' => 1, 'rows' => [['ok' => true, 'message' => "话题导入完成：新增 {$result['imported']} 条，已存在更新 {$result['skipped']} 条，失败 {$result['failed']} 条"]]]);
     }
 
     private static function handleTopicDelete()
@@ -146,7 +191,7 @@ class TopicController
             return;
         }
         TopicRepository::deleteByCtxId($ctxId);
-        TopicService::export();
+        try { TopicService::export(); } catch (\Throwable $e) { /* export fails silently */ }
         self::emitJson(['total' => 1, 'rows' => [['ok' => true, 'message' => 'deleted']]]);
     }
 

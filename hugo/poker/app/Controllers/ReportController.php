@@ -34,6 +34,14 @@ class ReportController
                     self::handleKeywordDelete();
                     return;
                 }
+                if ($_POST['action'] === 'import-site') {
+                    self::handleSiteImport();
+                    return;
+                }
+                if ($_POST['action'] === 'import-keyword') {
+                    self::handleKeywordImport();
+                    return;
+                }
             }
             $data = self::handleGet();
             if ($data === null) {
@@ -84,6 +92,93 @@ class ReportController
         SiteRepository::deleteByCtxId($ctxId);
         ExportService::export();
         self::emitJson(['ok' => true, 'message' => 'deleted']);
+    }
+
+    private static function handleSiteImport()
+    {
+        Security::requirePermission('site.manage');
+        if (!Security::csrfVerify(Security::requestToken())) {
+            self::emitJson(['ok' => false, 'message' => 'CSRF token invalid']);
+            return;
+        }
+        $file = \App\Config::dataDir() . '/siteops_setting.txt';
+        if (!is_file($file)) {
+            self::emitJson(['ok' => false, 'message' => 'siteops_setting.txt 不存在']);
+            return;
+        }
+        $lines = array_filter(file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES), function ($l) { return trim($l) !== ''; });
+        $records = [];
+        $failed = 0;
+        foreach ($lines as $line) {
+            $parts = explode('|', $line);
+            if (count($parts) < 12) { $failed++; continue; }
+            $json = json_decode($parts[11], true);
+            if (!is_array($json)) { $failed++; continue; }
+            $records[] = [
+                'ctx_id' => trim($parts[0]),
+                'git_name' => $parts[1],
+                'git_account' => $parts[2],
+                'status' => $parts[3],
+                'theme_type' => $parts[4],
+                'languages' => $parts[5],
+                'domain' => $parts[6],
+                'sns_id' => $parts[7],
+                'topnav_menus' => $parts[8],
+                'site_title' => $parts[9],
+                'site_subtitle' => $parts[10],
+                'keyword' => $json['keyword'] ?? '',
+                'theme_name' => $json['theme_name'] ?? $parts[1],
+                'sitedir' => $json['sitedir'] ?? '',
+                'deploy' => $json['deploy'] ?? '',
+                'hostip' => $json['hostip'] ?? '',
+                'local_deploy' => $json['local_deploy'] ?? '',
+                'local_hostip' => $json['local_hostip'] ?? '',
+                'site_logo' => $json['site_logo'] ?? '',
+                'json' => $parts[11],
+            ];
+        }
+        $result = SiteRepository::batchImport($records);
+        $result['failed'] += $failed;
+        ExportService::export();
+        self::emitJson(['ok' => true, 'message' => "站点导入完成：新增 {$result['imported']} 条，已存在更新 {$result['skipped']} 条，失败 {$result['failed']} 条"]);
+    }
+
+    private static function handleKeywordImport()
+    {
+        Security::requirePermission('keyword.manage');
+        if (!Security::csrfVerify(Security::requestToken())) {
+            self::emitJson(['ok' => false, 'message' => 'CSRF token invalid']);
+            return;
+        }
+        $file = \App\Config::dataDir() . '/keyword_monitor_list.txt';
+        if (!is_file($file)) {
+            self::emitJson(['ok' => false, 'message' => 'keyword_monitor_list.txt 不存在']);
+            return;
+        }
+        $lines = array_filter(file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES), function ($l) { return trim($l) !== ''; });
+        $records = [];
+        $failed = 0;
+        foreach ($lines as $line) {
+            $parts = explode('|', $line);
+            if (count($parts) < 7) { $failed++; continue; }
+            $json = json_decode($parts[6], true);
+            if (!is_array($json)) { $failed++; continue; }
+            $records[] = [
+                'ctx_id' => trim($parts[0]),
+                'keyword' => $parts[1],
+                'status' => $parts[2],
+                'git_name' => $parts[3],
+                'pubdir' => $parts[4],
+                'lang' => $parts[5],
+                'geo' => $json['geo'] ?? '',
+                'lasttask' => $json['lasttask'] ?? '',
+                'json' => $parts[6],
+            ];
+        }
+        $result = KeywordRepository::batchImport($records);
+        $result['failed'] += $failed;
+        \App\Services\KeywordService::export();
+        self::emitJson(['ok' => true, 'message' => "关键词导入完成：新增 {$result['imported']} 条，已存在更新 {$result['skipped']} 条，失败 {$result['failed']} 条"]);
     }
 
     private static function handleGet()

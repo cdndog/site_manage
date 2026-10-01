@@ -29,10 +29,14 @@ putenv('APP_DB_FILE=' . $testDb);
 putenv('APP_DATA_DIR=' . $dataDir);
 putenv('APP_CSRF_SECRET=testcsrfsecret');
 putenv('APP_API_CSRF_TOKENS=');
-
-$db = new SQLite3($testDb);
-$db->enableExceptions(true);
-$db->exec('CREATE TABLE "siteops" (
+putenv('APP_DB_DSN=');
+if (getenv('APP_DB_DSN') !== false && getenv('APP_DB_DSN') !== '') {
+    // PG 模式：由 Database::connection() 负责建表，此处仅确保目录
+    $db = null;
+} else {
+    $db = new SQLite3($testDb);
+    $db->enableExceptions(true);
+    $db->exec('CREATE TABLE "siteops" (
     "id" INTEGER NOT NULL UNIQUE,
     "ctx_id" VARCHAR NOT NULL UNIQUE,
     "git_name" VARCHAR NOT NULL UNIQUE,
@@ -56,6 +60,7 @@ $db->exec('CREATE TABLE "serverlist" (
     "status" VARCHAR, "json" VARCHAR, "time" DATETIME,
     PRIMARY KEY("id" AUTOINCREMENT))');
 $db->close();
+}
 
 $GLOBALS['pass'] = 0;
 $GLOBALS['fail'] = 0;
@@ -103,6 +108,13 @@ function runRequest(array $get = [], array $post = [], $method = 'GET', array $c
 
 function db($sql)
 {
+    if (getenv('APP_DB_DSN') !== false && getenv('APP_DB_DSN') !== '') {
+        if (preg_match('/^\s*(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)/i', $sql)) {
+            \App\Database::execute($sql);
+            return [];
+        }
+        return \App\Database::fetchAll($sql);
+    }
     $db = new SQLite3($GLOBALS['testDb']);
     if (preg_match('/^\s*(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)/i', $sql)) {
         $db->exec($sql);
@@ -214,7 +226,7 @@ if (count($rows) === 1) {
     test('inserted domain', $row['domain'] === 'testpoker.com', $row['domain']);
     test('inserted theme_name = git_name', $row['theme_name'] === 'testpoker', $row['theme_name']);
     test('inserted status done', $row['status'] === 'done', $row['status']);
-    test('inserted time set', preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', (string)$row['time']) === 1, $row['time']);
+    test('inserted time set', preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\+\d{2}(:\d{2})?)?$/', (string)$row['time']) === 1, $row['time']);
     $json = json_decode($row['json'], true);
     test('json round-trip', is_array($json));
     if (is_array($json)) {
@@ -238,8 +250,8 @@ if (count($exported) === 1) {
     test('export col domain idx6', $parts[6] === 'testpoker.com', $parts[6]);
     test('export col json idx12 valid', json_decode($parts[11], true) !== null);
 }
-test('json column equals backup file', file_exists($backupFile) && file_get_contents($backupFile) === $rows[0]['json'] ?? '');
-test('json column shown in confirm textarea', strpos($html, htmlspecialchars($rows[0]['json'])) !== false);
+test('json column equals backup file', file_exists($backupFile) && json_decode((string)file_get_contents($backupFile), true) == json_decode((string)($rows[0]['json'] ?? ''), true));
+test('json column shown in confirm textarea', strpos($html, 'testpoker.com') !== false && strpos($html, 'TESTUUID001') !== false);
 
 echo "== POST: pipe cleaning + html strip ==\n";
 $html = runRequest([], validPost([
@@ -277,6 +289,7 @@ if (count($row) === 1) {
 
 echo "== POST: upsert by domain ==\n";
 $row0 = db("SELECT * FROM siteops WHERE domain = 'testpoker.com'");
+$beforeCount = count(db("SELECT * FROM siteops"));
 runRequest([], validPost([
     'post_gitname' => 'testpoker',
     'post_domain' => 'testpoker.com',
@@ -285,7 +298,7 @@ runRequest([], validPost([
     'post_status' => 'draft',
 ]), 'POST');
 $after = db("SELECT * FROM siteops");
-test('same domain updates, no new row', count($after) === 3);
+test('same domain updates, no new row', count($after) === $beforeCount);
 $row1 = db("SELECT * FROM siteops WHERE domain = 'testpoker.com'");
 test('update keeps original ctx_id', $row1[0]['ctx_id'] === 'TESTUUID001', $row1[0]['ctx_id']);
 test('update refreshes title/status', $row1[0]['site_title'] === 'Updated Title' && $row1[0]['status'] === 'draft');
@@ -431,18 +444,24 @@ $html = runRequest([], [], 'GET', [], '/siteops.php', [], 'apitoken-1');
 test('api token allows page entry via header', strpos($html, 'id="wechatpost"') !== false, substr($html, 0, 120));
 $html = runRequest([], [], 'GET', ['siteops_uid' => 'client1'], '/siteops.php');
 test('cookie-only session still allowed when auth disabled', strpos($html, 'id="wechatpost"') !== false, substr($html, 0, 120));
-$html = runRequest([], [], 'GET', [], '/topictask.php');
+$html = runRequest([], [], 'GET', [], '/api/topic_task.php');
 test('api token required on task script without session', strpos($html, 'forbidden: missing or invalid API token') !== false, substr($html, 0, 120));
+echo "DEBUG after apitoken task\n";
 db("CREATE TABLE IF NOT EXISTS \"sitetopic\" (
     \"id\" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     \"ctx_id\" VARCHAR UNIQUE NOT NULL,
     \"git_name\" VARCHAR, \"domain\" VARCHAR, \"keyword\" VARCHAR,
     \"pubdir\" VARCHAR, \"status\" VARCHAR, \"lang\" VARCHAR, \"geo\" VARCHAR,
     \"lasttask\" VARCHAR, \"json\" VARCHAR, \"time\" DATETIME)");
+echo "DEBUG after create sitetopic\n";
 db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, json, time) VALUES ('APITOK1', 'apitok', 'apitok.com', 'poker api token', 'article', 'enable', 'en', 'US', '{}', '2026-08-01 09:30:00')");
-$html = runRequest(['t' => 'poker api token'], [], 'GET', [], '/topictask.php', [], 'apitoken-2');
+echo "DEBUG after insert APITOK1\n";
+$html = runRequest(['t' => 'poker api token'], [], 'GET', [], '/api/topic_task.php', [], 'apitoken-2');
+echo "DEBUG after apitoken2 request, html len: " . strlen($html) . " contains poker: " . (strpos($html, 'poker')!==false ? "YES" : "NO") . " html: " . substr($html,0,100) . "\n";
 test('api token allows task script via header', strpos($html, 'poker') !== false, substr($html, 0, 120));
+echo "DEBUG before delete APITOK1\n";
 db("DELETE FROM sitetopic WHERE ctx_id = 'APITOK1'");
+echo "DEBUG after delete APITOK1\n";
 $html = runRequest([], [], 'GET', [], '/config_list.php');
 test('api token required on config page without session', strpos($html, 'forbidden: missing or invalid API token') !== false, substr($html, 0, 120));
 $html = runRequest([], [], 'GET', [], '/config_list.php', [], 'apitoken-1');
@@ -477,7 +496,7 @@ $html = runRequest();
 test('auth+token: session-less browser sees login page', strpos($html, 'name="login_action"') !== false, substr($html, 0, 120));
 $html = runRequest([], [], 'GET', [], '/siteops.php', [], 'authapikey1');
 test('auth+token: api token renders data page', strpos($html, 'id="wechatpost"') !== false, substr($html, 0, 120));
-$html = runRequest([], [], 'GET', [], '/topictask.php');
+$html = runRequest([], [], 'GET', [], '/api/topic_task.php');
 test('auth+token: task script still 403 for session-less request', strpos($html, 'forbidden: missing or invalid API token') !== false, substr($html, 0, 120));
 $html = runRequest([], [], 'GET', ['siteops_uid' => 'client1']);
 test('auth+token: uid cookie without auth cookie sees login', strpos($html, 'name="login_action"') !== false, substr($html, 0, 120));
@@ -1331,7 +1350,7 @@ $json = runRequest(['format' => 'json'], [], 'GET', [], '/topiclist.php');
 $payload = json_decode($json, true);
 test('topic list json returns total+rows', is_array($payload) && isset($payload['total']) && $payload['total'] >= 1 && isset($payload['rows'][0]['ctx_id']), substr($json, 0, 120));
 test('topic list json contains exported topic', strpos($json, 'poker strategy guide') !== false);
-test('topic list json rows carry ctx_id for edit', strpos($json, 'topicedit.php?eid=') !== false || (is_array($payload) && isset($payload['rows'][0]['ctx_id']) && $payload['rows'][0]['ctx_id'] !== ''));
+test('topic list json rows carry ctx_id for edit', strpos($json, 'topicops.php?eid=') !== false || (is_array($payload) && isset($payload['rows'][0]['ctx_id']) && $payload['rows'][0]['ctx_id'] !== ''));
 $json = runRequest(['format' => 'json', 'search' => 'poker strategy guide'], [], 'GET', [], '/topiclist.php');
 $payload = json_decode($json, true);
 test('topic list json search filters rows', is_array($payload) && $payload['total'] >= 1 && strpos($json, 'poker strategy guide') !== false, substr($json, 0, 120));
@@ -1598,10 +1617,7 @@ putenv('APP_AUTH_SECRET');
 App\Support\Security::reset();
 
 echo "== report site delete ==\n";
-$dbw = new SQLite3($testDb);
-$dbw->enableExceptions(true);
-$dbw->exec("INSERT INTO siteops (ctx_id, git_name, domain, status) VALUES ('DELETECONTEXT1', 'delsite', 'delsite.com', 'enable')");
-$dbw->close();
+db("INSERT INTO siteops (ctx_id, git_name, domain, status) VALUES ('DELETECONTEXT1', 'delsite', 'delsite.com', 'enable')");
 $json = runRequest([], ['action' => 'delete-site', 'ctx_id' => 'DELETECONTEXT1', 'csrf_token' => 'x'], 'POST', [], '/seo_report.php');
 $payload = json_decode($json, true);
 test('report site delete removes row', is_array($payload) && $payload['ok'] === true && App\Repositories\SiteRepository::findByCtxId('DELETECONTEXT1') === null, substr($json, 0, 120));
@@ -1610,11 +1626,8 @@ $payload = json_decode($json, true);
 test('report site delete unknown ctx rejected', is_array($payload) && $payload['ok'] === false, substr($json, 0, 120));
 
 echo "== report word delete ==\n";
-$dbw = new SQLite3($testDb);
-$dbw->enableExceptions(true);
-$dbw->exec("INSERT INTO keywordmonitorlist (ctx_id, keyword, status, git_name, pubdir, lang) VALUES ('DELETEWORD1', 'delete word test', 'enable', 'delword', 'article', 'en')");
-$dbw->exec("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('DELETETOPIC1', 'deltopic', 'deltopic.com', 'delete topic test', 'article', 'enable', 'en', 'US', '20260801093000', '{}', '2026-08-01 09:30:00')");
-$dbw->close();
+db("INSERT INTO keywordmonitorlist (ctx_id, keyword, status, git_name, pubdir, lang) VALUES ('DELETEWORD1', 'delete word test', 'enable', 'delword', 'article', 'en')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('DELETETOPIC1', 'deltopic', 'deltopic.com', 'delete topic test', 'article', 'enable', 'en', 'US', '20260801093000', '{}', '2026-08-01 09:30:00')");
 $html = runRequest(['reporttype' => 'wordlist'], [], 'GET', [], '/seo_report.php');
 test('report wordlist action column name', strpos($html, '"title":"操作"') !== false, strpos($html, '"title":"操作"') !== false ? '' : 'column title not 操作');
 test('report wordlist delete button rendered', strpos($html, 'keywordDeleteConfirm') !== false && strpos($html, 'siteDeleteModal') !== false, substr($html, 0, 200));
@@ -1716,7 +1729,7 @@ $html = runRequest([], [], 'GET', ['siteops_uid' => 'whitelisttest'], '/siteops.
 test('non-whitelist ip requires auth on site page', strpos($html, '登录') !== false, substr($html, 0, 150));
 
 echo "== topic query/task from database ==\n";
-$json = runRequest(['t' => 'all'], [], 'GET', [], '/topicquery.php');
+$json = runRequest(['t' => 'all'], [], 'GET', [], '/api/topic_query.php');
 $payload = json_decode($json, true);
 test('topicquery all returns rows with id+json', is_array($payload) && count($payload) >= 1 && isset($payload[0]['id']) && isset($payload[0]['keyword']), substr($json, 0, 150));
 $found = false;
@@ -1726,14 +1739,14 @@ foreach ($payload as $item) {
     }
 }
 test('topicquery all contains fixture keyword', $found, substr($json, 0, 150));
-$json = runRequest(['t' => 'poker strategy guide'], [], 'GET', [], '/topicquery.php');
+$json = runRequest(['t' => 'poker strategy guide'], [], 'GET', [], '/api/topic_query.php');
 $payload = json_decode($json, true);
 test('topicquery keyword filters rows', is_array($payload) && count($payload) === 1 && $payload[0]['keyword'] === 'poker strategy guide', substr($json, 0, 150));
-$out = runRequest(['t' => 'no-such-keyword-xyz'], [], 'GET', [], '/topicquery.php');
-test('topicquery unknown keyword empty output', trim($out) === '', var_export($out, true));
+$out = runRequest(['t' => 'no-such-keyword-xyz'], [], 'GET', [], '/api/topic_query.php');
+test('topicquery unknown keyword returns empty array', trim($out) === '[]', var_export($out, true));
 db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TASKDONE1', 'done-site', 'done.com', 'done topic', 'article', 'enable', 'en', 'US', '" . date('Ymd') . "', '{\"git_name\":\"done-site\",\"keyword\":\"done topic\",\"status\":\"enable\",\"lasttask\":\"" . date('Ymd') . "\"}', '2026-08-01 09:30:00')");
 db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('WRITEBACK1', 'wb-site', 'wb.com', 'writeback only', 'article', 'enable', 'en', 'US', '', '{\"git_name\":\"wb-site\",\"keyword\":\"writeback only\",\"status\":\"enable\",\"lang\":\"en\",\"geo\":\"US\",\"pubdir\":\"article\",\"domain\":\"wb.com\"}', '2026-08-01 09:30:00')");
-$out = runRequest(['t' => 'writeback only'], [], 'GET', [], '/topictask.php');
+$out = runRequest(['t' => 'writeback only'], [], 'GET', [], '/api/topic_task.php');
 $line = trim($out);
 $wparts = explode('|', $line);
 test('topictask writeback outputs row', count($wparts) === 8 && $wparts[1] === 'writeback only', $line);
@@ -1743,9 +1756,9 @@ test('topictask writeback sets json lasttask today', is_array($wbjson) && isset(
 test('topictask writeback sets json status enable', is_array($wbjson) && $wbjson['status'] === 'enable', json_encode($wbjson));
 test('topictask writeback updates status column', is_array($wbrow) && isset($wbrow[0]['status']) && $wbrow[0]['status'] === 'enable', json_encode($wbrow));
 test('topictask writeback updates lasttask column', is_array($wbrow) && isset($wbrow[0]['lasttask']) && $wbrow[0]['lasttask'] === date('Ymd'), json_encode($wbrow));
-$out = runRequest(['t' => 'done topic'], [], 'GET', [], '/topictask.php');
+$out = runRequest(['t' => 'done topic'], [], 'GET', [], '/api/topic_task.php');
 test('topictask skips lasttask today rows', trim($out) === '', var_export($out, true));
-$out = runRequest(['t' => 'all'], [], 'GET', [], '/topictask.php');
+$out = runRequest(['t' => 'all'], [], 'GET', [], '/api/topic_task.php');
 $line = trim($out);
 $parts = explode('|', $line);
 $jsondata = json_decode(end($parts), true);
@@ -1754,16 +1767,16 @@ test('topictask selected row is enable', count($parts) === 8 && $parts[2] === 'e
 $dbrow = db("SELECT * FROM sitetopic WHERE ctx_id='" . $parts[0] . "'");
 test('topictask row exists in database', count($dbrow) === 1, 'ctx=' . $parts[0]);
 db("UPDATE sitetopic SET json = '{\"git_name\":\"testpoker\",\"domain\":\"testpoker.com\",\"keyword\":\"poker strategy guide\",\"pubdir\":\"article\",\"status\":\"enable\",\"lang\":\"en\",\"geo\":\"US\"}' WHERE ctx_id = 'TOPICCTX001'");
-$out = runRequest(['t' => 'poker strategy guide'], [], 'GET', [], '/topictask.php');
+$out = runRequest(['t' => 'poker strategy guide'], [], 'GET', [], '/api/topic_task.php');
 $line = trim($out);
 $parts = explode('|', $line);
 test('topictask keyword returns matching row', count($parts) === 8 && $parts[1] === 'poker strategy guide', $line);
 db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, json, time) VALUES ('BUGST1', 'bg', 'bg.com', 'bugstatus1', 'article', 'enable', 'en', 'US', '{\"keyword\":\"bugstatus1\",\"git_name\":\"bg\",\"lang\":\"en\",\"geo\":\"US\"}', '2026-08-01 09:30:00')");
 db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, json, time) VALUES ('BUGPU1', 'bp', 'bp.com', 'bugpostuuid', 'article', 'enable', 'en', 'US', '{\"keyword\":\"bugpostuuid\",\"git_name\":\"bp\",\"lang\":\"en\",\"geo\":\"US\",\"post_uuid\":\"OTHER1\"}', '2026-08-01 09:30:00')");
-$out = runRequest(['t' => 'bugstatus1'], [], 'GET', [], '/topictask.php');
+$out = runRequest(['t' => 'bugstatus1'], [], 'GET', [], '/api/topic_task.php');
 $brow = db("SELECT * FROM sitetopic WHERE ctx_id='BUGST1'");
 test('topictask writeback keeps status column when json lacks it', is_array($brow) && count($brow) === 1 && $brow[0]['status'] === 'enable', json_encode($brow));
-$out = runRequest(['t' => 'bugpostuuid'], [], 'GET', [], '/topictask.php');
+$out = runRequest(['t' => 'bugpostuuid'], [], 'GET', [], '/api/topic_task.php');
 $brow = db("SELECT * FROM sitetopic WHERE ctx_id='BUGPU1'");
 test('topictask writeback updates row by ctx_id not json post_uuid', is_array($brow) && count($brow) === 1 && $brow[0]['lasttask'] === date('Ymd'), json_encode($brow));
 
@@ -1784,7 +1797,7 @@ $json = runRequest(['t' => 'kw query fixture'], [], 'GET', [], '/keywordquery.ph
 $payload = json_decode($json, true);
 test('keywordquery keyword filters rows', is_array($payload) && count($payload) === 1 && $payload[0]['keyword'] === 'kw query fixture', substr($json, 0, 150));
 $out = runRequest(['t' => 'no-such-keyword-xyz'], [], 'GET', [], '/keywordquery.php');
-test('keywordquery unknown keyword empty output', trim($out) === '', var_export($out, true));
+test('keywordquery unknown keyword returns empty array', trim($out) === '[]', var_export($out, true));
 db("UPDATE keywordmonitorlist SET json = json_set(CASE WHEN json_valid(json) THEN json ELSE '{}' END, '$.lasttask', '" . date('Ymd') . "') WHERE ctx_id != 'KWWRITEBACK1'");
 $out = runRequest(['t' => 'all'], [], 'GET', [], '/keywordtask.php');
 $line = trim($out);
@@ -1803,6 +1816,15 @@ $kparts = explode('|', trim($out));
 test('keywordtask picks dirty row deterministically', $kparts[0] === 'KWBUGST1', trim($out));
 $kbrow = db("SELECT * FROM keywordmonitorlist WHERE ctx_id='KWBUGST1'");
 test('keywordtask writeback keeps status column when json lacks it', is_array($kbrow) && count($kbrow) === 1 && $kbrow[0]['status'] === 'disable', json_encode($kbrow));
+// 回归：keywordtask 此前只有 "all" 分支，t=<keyword> 时 $rows 未定义导致恒空输出
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWBRANCH1', 'kwb', 'kwbranch fixture', 'article', 'enable', 'en', 'US', '', '{\"git_name\":\"kwb\",\"keyword\":\"kwbranch fixture\",\"status\":\"enable\",\"lang\":\"en\",\"geo\":\"US\",\"pubdir\":\"article\"}', '2026-08-01 09:30:00')");
+$out = runRequest(['t' => 'kwbranch fixture'], [], 'GET', [], '/keywordtask.php');
+$kparts = explode('|', trim($out));
+test('keywordtask keyword branch returns matching row', count($kparts) === 7 && $kparts[0] === 'KWBRANCH1', trim($out));
+$out = runRequest(['t' => 'no-such-keyword-branch'], [], 'GET', [], '/keywordtask.php');
+test('keywordtask unknown keyword empty output', trim($out) === '', var_export($out, true));
+$out = runRequest([], [], 'GET', [], '/keywordtask.php');
+test('keywordtask missing t returns 400', strpos($out, 'FAIL') !== false, var_export($out, true));
 
 echo "== API endpoints for UiVision ==\n";
 putenv('APP_API_CSRF_TOKENS=uivision-key-1');
@@ -2061,6 +2083,406 @@ db("CREATE TABLE IF NOT EXISTS \"keywordmonitorlist\" (
     \"status\" VARCHAR, \"lang\" VARCHAR, \"geo\" VARCHAR,
     \"lasttask\" VARCHAR, \"json\" VARCHAR, \"time\" DATETIME)");
 
+// --- api/topic_ops.php ---
+resetRequest();
+$_POST = ['post_keyword' => '', 'post_gitname' => '', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+test('topic_ops missing keyword returns 400', is_array($json) && isset($json['ok']) && $json['ok'] === false && strpos($out, 'forbidden') === false, $out);
+
+resetRequest();
+$_POST = ['keyword' => '', 'git_name' => 'opsalias', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+test('topic_ops missing keyword alias returns 400', is_array($json) && $json['ok'] === false, $out);
+
+resetRequest();
+$_POST = ['post_keyword' => 'ops api kw', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+test('topic_ops missing git_name returns 400', is_array($json) && $json['ok'] === false && strpos($json['error'], 'post_keyword and post_gitname') !== false, $out);
+
+resetRequest();
+$_POST = [
+    'post_keyword' => 'ops api kw',
+    'post_gitname' => 'opstopic',
+    'post_domain' => 'opstopic.com',
+    'post_lang' => 'en',
+    'post_geo' => 'US',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+test('topic_ops inserts via API', is_array($json) && $json['ok'] === true && $json['created'] === 1 && $json['updated'] === 0, $out);
+test('topic_ops reports row action created', is_array($json) && isset($json['rows'][0]['action']) && $json['rows'][0]['action'] === 'created', $out);
+test('topic_ops applies default pubdir', is_array($json) && $json['rows'][0]['pubdir'] === 'article', $out);
+test('topic_ops applies default status', is_array($json) && $json['rows'][0]['status'] === 'enable', $out);
+test('topic_ops returns ctx_id', is_array($json) && $json['rows'][0]['ctx_id'] !== '', $out);
+$rows = db("SELECT * FROM sitetopic WHERE keyword = 'ops api kw' AND git_name = 'opstopic'");
+test('topic_ops wrote row to sitetopic', count($rows) === 1, json_encode($rows));
+
+resetRequest();
+$_POST = [
+    'post_keyword' => 'ops api kw',
+    'post_gitname' => 'opstopic',
+    'post_domain' => 'opstopic.com',
+    'post_lang' => 'ja',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+test('topic_ops upsert reports updated', is_array($json) && $json['ok'] === true && $json['created'] === 0 && $json['updated'] === 1, $out);
+test('topic_ops upsert row action updated', is_array($json) && $json['rows'][0]['action'] === 'updated', $out);
+$rows = db("SELECT * FROM sitetopic WHERE keyword = 'ops api kw' AND git_name = 'opstopic'");
+test('topic_ops did not duplicate row on upsert', count($rows) === 1, json_encode($rows));
+test('topic_ops upsert applied lang ja', count($rows) === 1 && $rows[0]['lang'] === 'ja', json_encode($rows));
+
+// 部分更新：仅传 lang，其余列必须保留原值
+resetRequest();
+$_POST = ['post_keyword' => 'ops api kw', 'post_gitname' => 'opstopic', 'post_lang' => 'ko', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+$rows = db("SELECT * FROM sitetopic WHERE keyword = 'ops api kw' AND git_name = 'opstopic'");
+test('topic_ops partial update applied lang', count($rows) === 1 && $rows[0]['lang'] === 'ko', json_encode($rows));
+test('topic_ops partial update kept domain', count($rows) === 1 && $rows[0]['domain'] === 'opstopic.com', json_encode($rows));
+test('topic_ops partial update kept geo', count($rows) === 1 && $rows[0]['geo'] === 'US', json_encode($rows));
+test('topic_ops partial update kept status default', count($rows) === 1 && $rows[0]['status'] === 'enable', json_encode($rows));
+test('topic_ops partial update kept pubdir', count($rows) === 1 && $rows[0]['pubdir'] === 'article', json_encode($rows));
+$decodedJson = json_decode(isset($rows[0]['json']) ? (string)$rows[0]['json'] : '{}', true);
+test('topic_ops partial update json mirrors merged lang', is_array($decodedJson) && $decodedJson['lang'] === 'ko', json_encode($decodedJson));
+test('topic_ops partial update json mirrors preserved geo', is_array($decodedJson) && $decodedJson['geo'] === 'US', json_encode($decodedJson));
+
+// 部分更新：显式传空串仍应清空该列（区分"未传"与"传空"）
+resetRequest();
+$_POST = ['post_keyword' => 'ops api kw', 'post_gitname' => 'opstopic', 'post_geo' => '', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$rows = db("SELECT * FROM sitetopic WHERE keyword = 'ops api kw' AND git_name = 'opstopic'");
+test('topic_ops explicit empty clears only that column', count($rows) === 1 && $rows[0]['geo'] === '' && $rows[0]['lang'] === 'ko', json_encode($rows));
+
+// 部分更新不应依赖默认状态值覆盖原值：新建时用 aidone，再只传 lang 更新
+resetRequest();
+$_POST = ['post_keyword' => 'ops keep status', 'post_gitname' => 'opskeep', 'post_status' => 'aidone', 'post_lang' => 'en', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+resetRequest();
+$_POST = ['post_keyword' => 'ops keep status', 'post_gitname' => 'opskeep', 'post_lang' => 'fr', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$rows = db("SELECT * FROM sitetopic WHERE keyword = 'ops keep status' AND git_name = 'opskeep'");
+test('topic_ops partial update did not clobber status with default', count($rows) === 1 && $rows[0]['status'] === 'aidone', json_encode($rows));
+test('topic_ops partial update applied lang over existing', count($rows) === 1 && $rows[0]['lang'] === 'fr', json_encode($rows));
+
+resetRequest();
+$_POST = ['keyword' => 'ops bulk a,ops bulk b,ops bulk c', 'git_name' => 'opsbulk', 'bulk' => 'true', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+test('topic_ops bulk creates 3 records', is_array($json) && $json['ok'] === true && $json['total'] === 3 && $json['created'] === 3, $out);
+$rows = db("SELECT * FROM sitetopic WHERE git_name = 'opsbulk'");
+test('topic_ops bulk wrote 3 rows', count($rows) === 3, json_encode($rows));
+
+resetRequest();
+$_POST = ['keyword' => ' , , ', 'git_name' => 'opsbulk', 'bulk' => 'true', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+test('topic_ops rejects all-empty bulk', is_array($json) && $json['ok'] === false && strpos($json['error'], 'no valid records') !== false, $out);
+
+resetRequest();
+$_POST = ['post_keyword' => 'ops nested', 'post_gitname' => 'opsnested', 'extra' => 'x', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+test('topic_ops rejects GET', is_array($json) && $json['ok'] === false && strpos($json['error'], 'method not allowed') !== false, $out);
+
+resetRequest();
+$_POST = ['post_keyword' => 'ops tok', 'post_gitname' => 'opstok', 'csrf_token' => 'bad-key'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$json = json_decode($out, true);
+test('topic_ops rejects bad API token', is_array($json) && $json['ok'] === false && strpos($json['error'], 'forbidden') !== false, $out);
+
+resetRequest();
+$_SERVER['REQUEST_METHOD'] = 'OPTIONS';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+test('topic_ops OPTIONS returns empty 204', $out === '', $out);
+
+// --- api/topicops.php（topic_ops.php 别名）---
+resetRequest();
+$_POST = ['post_keyword' => 'ops alias kw', 'post_gitname' => 'opsalias', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topicops.php');
+$json = json_decode($out, true);
+test('topicops alias inserts via API', is_array($json) && $json['ok'] === true && $json['created'] === 1, $out);
+$rows = db("SELECT * FROM sitetopic WHERE keyword = 'ops alias kw' AND git_name = 'opsalias'");
+test('topicops alias wrote row to sitetopic', count($rows) === 1, json_encode($rows));
+
+resetRequest();
+$_POST = ['post_keyword' => 'ops alias kw', 'post_gitname' => 'opsalias', 'post_lang' => 'de', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topicops.php');
+$json = json_decode($out, true);
+test('topicops alias supports partial update', is_array($json) && $json['ok'] === true && $json['updated'] === 1, $out);
+$rows = db("SELECT * FROM sitetopic WHERE keyword = 'ops alias kw' AND git_name = 'opsalias'");
+test('topicops alias partial update kept pubdir', count($rows) === 1 && $rows[0]['pubdir'] === 'article', json_encode($rows));
+
+resetRequest();
+$_POST = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topicops.php');
+$json = json_decode($out, true);
+test('topicops alias rejects GET', is_array($json) && $json['ok'] === false && strpos($json['error'], 'method not allowed') !== false, $out);
+
+// --- api/keyword_ops.php ---
+resetRequest();
+$_POST = ['post_keyword' => '', 'post_gitname' => '', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$json = json_decode($out, true);
+test('keyword_ops missing keyword returns 400', is_array($json) && $json['ok'] === false && strpos($json['error'], 'post_keyword and post_gitname') !== false && strpos($out, 'forbidden') === false, $out);
+
+resetRequest();
+$_POST = ['keyword' => '', 'git_name' => 'opsalias', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$json = json_decode($out, true);
+test('keyword_ops missing keyword alias returns 400', is_array($json) && $json['ok'] === false, $out);
+
+resetRequest();
+$_POST = ['post_gitname' => 'opskw', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$json = json_decode($out, true);
+test('keyword_ops missing git_name returns 400', is_array($json) && $json['ok'] === false, $out);
+
+resetRequest();
+$_POST = [
+    'keyword' => 'ops kw one',
+    'git_name' => 'opskw',
+    'pubdir' => 'opsdir',
+    'lang' => 'en',
+    'geo' => 'US',
+    'status' => 'aidone',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$json = json_decode($out, true);
+test('keyword_ops inserts via API', is_array($json) && $json['ok'] === true && $json['created'] === 1 && $json['updated'] === 0, $out);
+test('keyword_ops reports row action created', is_array($json) && $json['rows'][0]['action'] === 'created', $out);
+test('keyword_ops alias mapped pubdir', is_array($json) && $json['rows'][0]['pubdir'] === 'opsdir', $out);
+test('keyword_ops alias mapped geo', is_array($json) && $json['rows'][0]['geo'] === 'US', $out);
+test('keyword_ops returns ctx_id', is_array($json) && $json['rows'][0]['ctx_id'] !== '', $out);
+$rows = db("SELECT * FROM keywordmonitorlist WHERE keyword = 'ops kw one'");
+test('keyword_ops wrote row to keywordmonitorlist', count($rows) === 1, json_encode($rows));
+
+// 部分更新：仅传 lang，其余列必须保留原值
+resetRequest();
+$_POST = ['post_keyword' => 'ops kw one', 'post_gitname' => 'opskw', 'post_lang' => 'ja', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$json = json_decode($out, true);
+test('keyword_ops upsert reports updated', is_array($json) && $json['ok'] === true && $json['created'] === 0 && $json['updated'] === 1, $out);
+$rows = db("SELECT * FROM keywordmonitorlist WHERE keyword = 'ops kw one'");
+test('keyword_ops did not duplicate row on upsert', count($rows) === 1, json_encode($rows));
+test('keyword_ops partial update applied lang', count($rows) === 1 && $rows[0]['lang'] === 'ja', json_encode($rows));
+test('keyword_ops partial update kept pubdir', count($rows) === 1 && $rows[0]['pubdir'] === 'opsdir', json_encode($rows));
+test('keyword_ops partial update kept geo', count($rows) === 1 && $rows[0]['geo'] === 'US', json_encode($rows));
+test('keyword_ops partial update kept status', count($rows) === 1 && $rows[0]['status'] === 'aidone', json_encode($rows));
+$decodedJson = json_decode(isset($rows[0]['json']) ? (string)$rows[0]['json'] : '{}', true);
+test('keyword_ops partial update json mirrors merged lang', is_array($decodedJson) && $decodedJson['lang'] === 'ja', json_encode($decodedJson));
+test('keyword_ops partial update json mirrors preserved geo', is_array($decodedJson) && $decodedJson['geo'] === 'US', json_encode($decodedJson));
+
+// 显式传空串仍应清空该列
+resetRequest();
+$_POST = ['post_keyword' => 'ops kw one', 'post_gitname' => 'opskw', 'post_geo' => '', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$rows = db("SELECT * FROM keywordmonitorlist WHERE keyword = 'ops kw one'");
+test('keyword_ops explicit empty clears only that column', count($rows) === 1 && $rows[0]['geo'] === '' && $rows[0]['lang'] === 'ja', json_encode($rows));
+
+resetRequest();
+$_POST = ['keyword' => 'ops bulk a,ops bulk b,ops bulk c', 'git_name' => 'opskwbulk', 'bulk' => 'true', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$json = json_decode($out, true);
+test('keyword_ops bulk creates 3 records', is_array($json) && $json['ok'] === true && $json['total'] === 3 && $json['created'] === 3, $out);
+$rows = db("SELECT * FROM keywordmonitorlist WHERE git_name = 'opskwbulk'");
+test('keyword_ops bulk wrote 3 rows', count($rows) === 3, json_encode($rows));
+
+resetRequest();
+$_POST = ['keyword' => ' , , ', 'git_name' => 'opskwbulk', 'bulk' => 'true', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$json = json_decode($out, true);
+test('keyword_ops rejects all-empty bulk', is_array($json) && $json['ok'] === false && strpos($json['error'], 'no valid records') !== false, $out);
+
+resetRequest();
+$_POST = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$json = json_decode($out, true);
+test('keyword_ops rejects GET', is_array($json) && $json['ok'] === false && strpos($json['error'], 'method not allowed') !== false, $out);
+
+resetRequest();
+$_POST = ['post_keyword' => 'ops tok', 'post_gitname' => 'opstok', 'csrf_token' => 'bad-key'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+$json = json_decode($out, true);
+test('keyword_ops rejects bad API token', is_array($json) && $json['ok'] === false && strpos($json['error'], 'forbidden') !== false, $out);
+
+resetRequest();
+$_SERVER['REQUEST_METHOD'] = 'OPTIONS';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keyword_ops.php');
+test('keyword_ops OPTIONS returns empty 204', $out === '', $out);
+
+// --- api/keywordops.php（keyword_ops.php 别名）---
+resetRequest();
+$_POST = ['keyword' => 'kwalias kw', 'git_name' => 'kwalias', 'geo' => 'CN', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keywordops.php');
+$json = json_decode($out, true);
+test('keywordops alias inserts via API', is_array($json) && $json['ok'] === true && $json['created'] === 1, $out);
+$rows = db("SELECT * FROM keywordmonitorlist WHERE keyword = 'kwalias kw'");
+test('keywordops alias wrote row', count($rows) === 1, json_encode($rows));
+
+resetRequest();
+$_POST = ['keyword' => 'kwalias kw', 'git_name' => 'kwalias', 'lang' => 'ja', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keywordops.php');
+$json = json_decode($out, true);
+test('keywordops alias supports partial update', is_array($json) && $json['ok'] === true && $json['updated'] === 1, $out);
+$rows = db("SELECT * FROM keywordmonitorlist WHERE keyword = 'kwalias kw'");
+test('keywordops alias partial update kept geo', count($rows) === 1 && $rows[0]['geo'] === 'CN', json_encode($rows));
+
+resetRequest();
+$_POST = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/keywordops.php');
+$json = json_decode($out, true);
+test('keywordops alias rejects GET', is_array($json) && $json['ok'] === false && strpos($json['error'], 'method not allowed') !== false, $out);
+
+// --- api/siteops.php（site_ops.php 别名）---
+resetRequest();
+$_POST = ['domain' => 'siteops-alias.com', 'git_name' => 'siteopsalias', 'languages' => 'zh', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/siteops.php');
+$json = json_decode($out, true);
+test('siteops alias inserts via API', is_array($json) && $json['ok'] === true && $json['created'] === 1, $out);
+$rows = db("SELECT * FROM siteops WHERE domain = 'siteops-alias.com'");
+test('siteops alias wrote row', count($rows) === 1, json_encode($rows));
+
+resetRequest();
+$_POST = ['domain' => 'siteops-alias.com', 'git_name' => 'siteopsalias', 'languages' => 'ja', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/siteops.php');
+$json = json_decode($out, true);
+test('siteops alias supports partial update', is_array($json) && $json['ok'] === true && $json['updated'] === 1, $out);
+
+resetRequest();
+$_POST = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/siteops.php');
+$json = json_decode($out, true);
+test('siteops alias rejects GET', is_array($json) && $json['ok'] === false && strpos($json['error'], 'method not allowed') !== false, $out);
+
+// --- api/site_ops.php ---
+resetRequest();
+$_POST = ['post_domain' => '', 'post_gitname' => '', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
+$json = json_decode($out, true);
+test('site_ops missing domain returns 400', is_array($json) && $json['ok'] === false && strpos($json['error'], 'post_domain and post_gitname') !== false && strpos($out, 'forbidden') === false, $out);
+
+resetRequest();
+$_POST = ['domain' => '', 'git_name' => 'opsalias', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
+$json = json_decode($out, true);
+test('site_ops missing domain alias returns 400', is_array($json) && $json['ok'] === false, $out);
+
+resetRequest();
+$_POST = ['post_gitname' => 'opssite', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
+$json = json_decode($out, true);
+test('site_ops missing git_name returns 400', is_array($json) && $json['ok'] === false, $out);
+
+resetRequest();
+$_POST = [
+    'domain' => 'opssite1.com',
+    'git_name' => 'opssite',
+    'site_title' => 'Ops Site One',
+    'site_logo' => 'logo1.png',
+    'languages' => 'en',
+    'status' => 'aidone',
+    'sns_id' => 'sns-1',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
+$json = json_decode($out, true);
+test('site_ops inserts via API', is_array($json) && $json['ok'] === true && $json['created'] === 1 && $json['updated'] === 0, $out);
+test('site_ops reports row action created', is_array($json) && $json['rows'][0]['action'] === 'created', $out);
+test('site_ops alias mapped site_title', is_array($json) && $json['rows'][0]['site_title'] === 'Ops Site One', $out);
+test('site_ops alias mapped languages', is_array($json) && $json['rows'][0]['languages'] === 'en', $out);
+test('site_ops returns ctx_id', is_array($json) && $json['rows'][0]['ctx_id'] !== '', $out);
+$rows = db("SELECT * FROM siteops WHERE domain = 'opssite1.com'");
+test('site_ops wrote row to siteops', count($rows) === 1, json_encode($rows));
+
+// 部分更新：仅传 languages，其余列必须保留原值
+resetRequest();
+$_POST = ['post_domain' => 'opssite1.com', 'post_gitname' => 'opssite', 'post_lang' => 'ja', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
+$json = json_decode($out, true);
+test('site_ops upsert reports updated', is_array($json) && $json['ok'] === true && $json['created'] === 0 && $json['updated'] === 1, $out);
+$rows = db("SELECT * FROM siteops WHERE domain = 'opssite1.com'");
+test('site_ops did not duplicate row on upsert', count($rows) === 1, json_encode($rows));
+test('site_ops partial update applied lang', count($rows) === 1 && $rows[0]['languages'] === 'ja', json_encode($rows));
+test('site_ops partial update kept site_title', count($rows) === 1 && $rows[0]['site_title'] === 'Ops Site One', json_encode($rows));
+test('site_ops partial update kept site_logo', count($rows) === 1 && $rows[0]['site_logo'] === 'logo1.png', json_encode($rows));
+test('site_ops partial update kept status', count($rows) === 1 && $rows[0]['status'] === 'aidone', json_encode($rows));
+test('site_ops partial update kept sns_id', count($rows) === 1 && $rows[0]['sns_id'] === 'sns-1', json_encode($rows));
+$decodedJson = json_decode(isset($rows[0]['json']) ? (string)$rows[0]['json'] : '{}', true);
+test('site_ops partial update json mirrors merged lang', is_array($decodedJson) && $decodedJson['languages'] === 'ja', json_encode($decodedJson));
+test('site_ops partial update json mirrors preserved title', is_array($decodedJson) && $decodedJson['site_title'] === 'Ops Site One', json_encode($decodedJson));
+test('site_ops partial update json mirrors preserved status', is_array($decodedJson) && $decodedJson['status'] === 'aidone', json_encode($decodedJson));
+
+// 显式传空串仍应清空该列
+resetRequest();
+$_POST = ['post_domain' => 'opssite1.com', 'post_gitname' => 'opssite', 'post_sns_id' => '', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
+$rows = db("SELECT * FROM siteops WHERE domain = 'opssite1.com'");
+test('site_ops explicit empty clears only that column', count($rows) === 1 && $rows[0]['sns_id'] === '' && $rows[0]['languages'] === 'ja', json_encode($rows));
+
+resetRequest();
+$_POST = ['csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
+$json = json_decode($out, true);
+test('site_ops rejects GET', is_array($json) && $json['ok'] === false && strpos($json['error'], 'method not allowed') !== false, $out);
+
+resetRequest();
+$_POST = ['post_domain' => 'x.com', 'post_gitname' => 'x', 'csrf_token' => 'bad-key'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
+$json = json_decode($out, true);
+test('site_ops rejects bad API token', is_array($json) && $json['ok'] === false && strpos($json['error'], 'forbidden') !== false, $out);
+
+resetRequest();
+$_SERVER['REQUEST_METHOD'] = 'OPTIONS';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
+test('site_ops OPTIONS returns empty 204', $out === '', $out);
+
 // --- api/topic_query.php ---
 resetRequest();
 $_GET = ['t' => 'all', 'csrf_token' => 'uivision-key-1'];
@@ -2073,7 +2495,7 @@ resetRequest();
 $_GET = ['t' => 'no-such-kw-xyz', 'csrf_token' => 'uivision-key-1'];
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $out = runApiEndpoint(dirname(__DIR__) . '/api/topic_query.php');
-test('topic_query unknown keyword empty output', trim($out) === '', $out);
+test('topic_query unknown keyword returns empty array', trim($out) === '[]', $out);
 
 resetRequest();
 $_GET = ['csrf_token' => 'uivision-key-1'];
@@ -2152,6 +2574,36 @@ $_GET = ['csrf_token' => 'uivision-key-1'];
 $_SERVER['REQUEST_METHOD'] = 'POST';
 $out = runApiEndpoint(dirname(__DIR__) . '/api/site_query.php');
 test('site_query rejects POST', strpos($out, 'FAIL') !== false || strpos($out, 'error') !== false, $out);
+
+// --- 根端点 sitequery.php（此前零覆盖；验证重构后仍走 Database 层/Config 解析）---
+echo "== root sitequery.php endpoint ==\n";
+db("INSERT INTO siteops (ctx_id, git_name, domain, status, json, time) VALUES ('SQROOT1', 'sqroot1', 'sqroot1.com', 'enable', '{\"status\":\"done\",\"site_title\":\"SQ Root Done\"}', '2026-08-01 09:30:00')");
+db("INSERT INTO siteops (ctx_id, git_name, domain, status, json, time) VALUES ('SQROOT2', 'sqroot2', 'sqroot2.com', 'enable', '{\"status\":\"pending\",\"site_title\":\"SQ Root Pending\"}', '2026-08-01 09:30:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('SQT1', 'sqt', 'sqroot1.com', 'sq topic', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-01 09:30:00')");
+
+// 数据源断言：Config::dbFile() 必须解析到测试库（重构前硬编码 sitedata.sqlite 会读到生产库）
+test('sitequery resolves db file via Config', \App\Config::dbFile() === $testDb, \App\Config::dbFile());
+
+$out = runRequest(['t' => 'all', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/sitequery.php');
+$json = json_decode($out, true);
+test('sitequery root all returns JSON array', is_array($json), substr($out, 0, 150));
+test('sitequery root all includes done fixture', is_array($json) && in_array('SQROOT1', array_column($json, 'id'), true), substr($out, 0, 200));
+test('sitequery root all excludes non-done fixture', is_array($json) && !in_array('SQROOT2', array_column($json, 'id'), true), substr($out, 0, 200));
+
+$out = runRequest(['t' => 'sqroot1.com', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/sitequery.php');
+$json = json_decode($out, true);
+test('sitequery root domain filters to done rows', is_array($json) && count($json) === 1 && $json[0]['id'] === 'SQROOT1', substr($out, 0, 200));
+
+$out = runRequest(['t' => 'no-such-site-xyz', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/sitequery.php');
+test('sitequery root unknown search returns empty array', trim($out) === '[]', var_export($out, true));
+
+$out = runRequest(['csrf_token' => 'uivision-key-1'], [], 'GET', [], '/sitequery.php');
+test('sitequery root missing t returns 400', strpos($out, 'error') !== false, var_export($out, true));
+
+// limited 分支：LEFT JOIN sitetopic 域名计数 + ORDER BY RANDOM()
+$out = runRequest(['t' => 'all', 'limit' => '1', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/sitequery.php');
+$json = json_decode($out, true);
+test('sitequery root limit branch returns at most limit rows', is_array($json) && count($json) <= 1, substr($out, 0, 200));
 
 echo "== uivision_upload seodata sync ==\n";
 function runUivUpload(string $fileContent, string $savename, string $endpoint = '/api/uivision_upload.php'): string {

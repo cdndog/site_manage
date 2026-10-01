@@ -6,7 +6,7 @@ do
   siteType=$(echo ${singleText} |cut -d'|' -f1)
   uploadUrl=$(echo ${singleText} |cut -d'|' -f1)
   # siteType="poker"
-  topicUrl="${serverDomain}/hugo/topicquery.php?t=all"
+  topicUrl="${serverDomain}/hugo/api/topic_query.php?t=all"
   # uploadUrl="https://wptg.wptdata.com/hugo/uivision_upload.php"
   localTaskList="${siteType}_perplexity_seo_keyword.csv"
 
