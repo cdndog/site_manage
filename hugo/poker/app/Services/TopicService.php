@@ -16,6 +16,52 @@ class TopicService
         'ctx_id', 'keyword', 'status', 'git_name', 'domain', 'pubdir', 'lang', 'json',
     ];
 
+    // 旧版 topic_monitor_list.txt 布局：topic_bulk_update_via_import.php 写出，geo 为独立列（共 9 列）
+    const LEGACY_EXPORT_COLUMNS = [
+        'ctx_id', 'git_name', 'domain', 'keyword', 'pubdir', 'status', 'lang', 'geo', 'json',
+    ];
+
+    /**
+     * 解析 topic_monitor_list.txt 的一行，兼容 8 列现行布局与 9 列旧版布局。
+     *
+     * @return array|null 解析成功返回列=>值映射，失败返回 null
+     */
+    public static function parseMonitorLine(string $line)
+    {
+        $line = trim($line);
+        if ($line === '') {
+            return null;
+        }
+        $parts = explode('|', $line);
+        $count = count($parts);
+        if ($count === count(self::EXPORT_COLUMNS)) {
+            $columns = self::EXPORT_COLUMNS;
+        } elseif ($count === count(self::LEGACY_EXPORT_COLUMNS)) {
+            $columns = self::LEGACY_EXPORT_COLUMNS;
+        } else {
+            return null;
+        }
+        $jsonRaw = $parts[$count - 1];
+        $json = json_decode($jsonRaw, true);
+        if (!is_array($json)) {
+            return null;
+        }
+        $row = array_combine($columns, $parts);
+        $row['ctx_id'] = trim($row['ctx_id']);
+        if ($row['ctx_id'] === '') {
+            return null;
+        }
+        // 现行布局无 geo 列，从 json 回填；旧版布局 geo 是独立列，优先取列值
+        if (!isset($row['geo']) || trim((string)$row['geo']) === '') {
+            $row['geo'] = (string)($json['geo'] ?? '');
+        }
+        $row['lasttask'] = (string)($json['lasttask'] ?? '');
+        $row['json'] = $jsonRaw;
+        $row['decoded'] = $json;
+        $row['legacy'] = ($columns === self::LEGACY_EXPORT_COLUMNS);
+        return $row;
+    }
+
     public static function sanitizePost(array $post)
     {
         array_walk($post, function (&$item) {

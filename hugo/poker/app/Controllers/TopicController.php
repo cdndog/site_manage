@@ -153,28 +153,35 @@ class TopicController
         $lines = array_filter(file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES), function ($l) { return trim($l) !== ''; });
         $records = [];
         $failed = 0;
+        $legacy = 0;
         foreach ($lines as $line) {
-            $parts = explode('|', $line);
-            if (count($parts) < 8) { $failed++; continue; }
-            $json = json_decode($parts[7], true);
-            if (!is_array($json)) { $failed++; continue; }
+            // 兼容 8 列现行布局与 9 列旧版布局（旧版 geo 为独立列）
+            $row = TopicService::parseMonitorLine($line);
+            if ($row === null) { $failed++; continue; }
+            if ($row['legacy']) { $legacy++; }
             $records[] = [
-                'ctx_id' => trim($parts[0]),
-                'keyword' => $parts[1],
-                'status' => $parts[2],
-                'git_name' => $parts[3],
-                'domain' => $parts[4],
-                'pubdir' => $parts[5],
-                'lang' => $parts[6],
-                'geo' => $json['geo'] ?? '',
-                'lasttask' => $json['lasttask'] ?? '',
-                'json' => $parts[7],
+                'ctx_id' => $row['ctx_id'],
+                'keyword' => $row['keyword'],
+                'status' => $row['status'],
+                'git_name' => $row['git_name'],
+                'domain' => $row['domain'],
+                'pubdir' => $row['pubdir'],
+                'lang' => $row['lang'],
+                'geo' => $row['geo'],
+                'lasttask' => $row['lasttask'],
+                'json' => $row['json'],
             ];
+        }
+        // 全量失败时不导出：否则会用当前库状态覆盖掉用户的源文件，且不可恢复
+        if (count($records) === 0) {
+            self::emitJson(['total' => 1, 'rows' => [['ok' => false, 'message' => "话题导入失败：{$failed} 行全部无法解析（列数或 json 非法），已跳过导出以保护源文件"]]]);
+            return;
         }
         $result = TopicRepository::batchImport($records);
         $result['failed'] += $failed;
         TopicService::export();
-        self::emitJson(['total' => 1, 'rows' => [['ok' => true, 'message' => "话题导入完成：新增 {$result['imported']} 条，已存在更新 {$result['skipped']} 条，失败 {$result['failed']} 条"]]]);
+        $legacyNote = $legacy > 0 ? "（其中 {$legacy} 行为旧版 9 列格式，geo 取自独立列）" : '';
+        self::emitJson(['total' => 1, 'rows' => [['ok' => true, 'message' => "话题导入完成：新增 {$result['imported']} 条，已存在更新 {$result['skipped']} 条，失败 {$result['failed']} 条{$legacyNote}"]]]);
     }
 
     private static function handleTopicDelete()

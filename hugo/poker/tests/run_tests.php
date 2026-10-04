@@ -1309,6 +1309,228 @@ test('report sitelist json contains test site', strpos($json, 'testpoker.com') !
 $json = runRequest(['format' => 'json', 'reporttype' => 'sitelist', 'search' => 'testpoker.com'], [], 'GET', [], '/seo_report.php');
 $payload = json_decode($json, true);
 test('report sitelist json search filters', is_array($payload) && $payload['total'] >= 1 && isset($payload['rows'][0]['domain']) && $payload['rows'][0]['domain'] === 'testpoker.com', substr($json, 0, 120));
+
+// --- siteops_setting.txt 导入：兼容 12 列现行布局与 11 列旧版布局 ---
+echo "== siteops_setting import ==\n";
+$impToken = substr(hash_hmac('sha256', 'csrf|impuid1', 'testcsrfsecret'), 0, 32);
+$settingFile = $GLOBALS['dataDir'] . '/siteops_setting.txt';
+$legacyJson = json_encode([
+    'git_name' => 'legacysite.com', 'post_uuid' => null, 'git_account' => 'legacyacct',
+    'domain' => 'legacysite.com', 'site_title' => 'Legacy Site', 'site_logo' => 'https://img.example.com/l.png',
+    'languages' => 'vi', 'sns_id' => '@Legacy', 'topnav_menus' => 'A,B', 'keyword' => 'kw1,kw2',
+    'theme_name' => 'legacysite.com', 'theme_type' => 'sport', 'sitedir' => '/root/hugo/legacysite.com',
+    'deploy' => 'cloudflare', 'hostip' => '10.0.0.9', 'local_deploy' => 'cloudflare', 'local_hostip' => '10.0.0.9',
+    'site_subtitle' => 'Legacy subtitle', 'status' => 'done',
+], JSON_UNESCAPED_UNICODE);
+// 旧版 = EXPORT_COLUMNS 去掉 git_account，共 11 列
+$legacyLine = implode('|', [
+    'LEGACYCTX001', 'legacysite.com', 'done', 'sport', 'vi',
+    'legacysite.com', '@Legacy', 'A,B', 'Legacy Site', 'Legacy subtitle', $legacyJson,
+]);
+file_put_contents($settingFile, $legacyLine . "\n");
+$parsedLegacy = App\Services\SiteService::parseSettingLine($legacyLine);
+test('parseSettingLine accepts legacy 11 columns', is_array($parsedLegacy) && $parsedLegacy['legacy'] === true, var_export($parsedLegacy === null, true));
+test('parseSettingLine recovers git_account from json', is_array($parsedLegacy) && $parsedLegacy['git_account'] === 'legacyacct', json_encode($parsedLegacy['git_account'] ?? null));
+test('parseSettingLine maps legacy status not theme_type', is_array($parsedLegacy) && $parsedLegacy['status'] === 'done' && $parsedLegacy['theme_type'] === 'sport' && $parsedLegacy['languages'] === 'vi', json_encode([$parsedLegacy['status'] ?? null, $parsedLegacy['theme_type'] ?? null, $parsedLegacy['languages'] ?? null]));
+test('parseSettingLine maps legacy sns_id from index 6', is_array($parsedLegacy) && $parsedLegacy['sns_id'] === '@Legacy' && $parsedLegacy['domain'] === 'legacysite.com', json_encode([$parsedLegacy['sns_id'] ?? null, $parsedLegacy['domain'] ?? null]));
+$currentLine = implode('|', [
+    'CURRENTCTX01', 'cursite.com', 'curacct', 'draft', 'poker', 'en',
+    'cursite.com', 'cursns', 'C,D', 'Cur Site', 'Cur subtitle', $legacyJson,
+]);
+$parsedCurrent = App\Services\SiteService::parseSettingLine($currentLine);
+test('parseSettingLine accepts current 12 columns', is_array($parsedCurrent) && $parsedCurrent['legacy'] === false && $parsedCurrent['git_account'] === 'curacct', json_encode($parsedCurrent['git_account'] ?? null));
+test('parseSettingLine rejects wrong column count', App\Services\SiteService::parseSettingLine('a|b|c') === null, 'should be null');
+test('parseSettingLine rejects invalid json tail', App\Services\SiteService::parseSettingLine(implode('|', array_fill(0, 11, 'x'))) === null, 'should be null');
+
+$html = runRequest([], ['action' => 'import-site', 'csrf_token' => $impToken], 'POST', ['siteops_uid' => 'impuid1'], '/seo_report.php');
+$payload = json_decode($html, true);
+test('import-site imports legacy 11-column row', is_array($payload) && $payload['ok'] === true && strpos($payload['message'], '新增 1 条') !== false, substr($html, 0, 200));
+test('import-site reports legacy row count', is_array($payload) && strpos($payload['message'], '旧版 11 列格式') !== false, substr($html, 0, 200));
+$legacyRow = db("SELECT * FROM siteops WHERE ctx_id = 'LEGACYCTX001'");
+test('import-site persisted legacy row', count($legacyRow) === 1 && $legacyRow[0]['domain'] === 'legacysite.com', json_encode($legacyRow));
+test('import-site recovered git_account into column', count($legacyRow) === 1 && $legacyRow[0]['git_account'] === 'legacyacct', json_encode($legacyRow[0]['git_account'] ?? null));
+test('import-site kept status from index 2 not index 3', count($legacyRow) === 1 && $legacyRow[0]['status'] === 'done' && $legacyRow[0]['theme_type'] === 'sport', json_encode($legacyRow));
+$exportedLegacy = exportLines();
+$legacyWidth = count($exportedLegacy) ? count(explode('|', $exportedLegacy[0])) : 0;
+test('export after legacy import writes 12 columns', $legacyWidth === 12, 'width=' . $legacyWidth);
+
+file_put_contents($settingFile, $currentLine . "\n");
+$html = runRequest([], ['action' => 'import-site', 'csrf_token' => $impToken], 'POST', ['siteops_uid' => 'impuid1'], '/seo_report.php');
+$payload = json_decode($html, true);
+test('import-site imports current 12-column row', is_array($payload) && $payload['ok'] === true && strpos($payload['message'], '新增 1 条') !== false, substr($html, 0, 200));
+$currentRow = db("SELECT * FROM siteops WHERE ctx_id = 'CURRENTCTX01'");
+test('import-site persisted current row', count($currentRow) === 1 && $currentRow[0]['git_account'] === 'curacct' && $currentRow[0]['status'] === 'draft', json_encode($currentRow));
+
+// 全量失败时必须跳过导出，否则会用库状态覆盖用户源文件
+$doomed = implode('|', ['TOOBADCTX01', 'x', 'y']);
+file_put_contents($settingFile, $doomed . "\n" . implode('|', ['TOOBADCTX02', 'p', 'q']) . "\n");
+$html = runRequest([], ['action' => 'import-site', 'csrf_token' => $impToken], 'POST', ['siteops_uid' => 'impuid1'], '/seo_report.php');
+$payload = json_decode($html, true);
+test('import-site rejects all-bad file', is_array($payload) && $payload['ok'] === false && strpos($payload['message'], '全部无法解析') !== false, substr($html, 0, 200));
+$after = trim((string)@file_get_contents($settingFile));
+test('import-site does not overwrite source file on total failure', $after === $doomed . "\n" . implode('|', ['TOOBADCTX02', 'p', 'q']), 'source=' . $after);
+
+// ReportService::sitelist 同样需接受旧版 11 列
+file_put_contents($settingFile, $legacyLine . "\n");
+$sitelistRows = App\Services\ReportService::sitelist();
+test('ReportService sitelist reads legacy 11 columns', count($sitelistRows) === 1 && $sitelistRows[0]['git_account'] === 'legacyacct', json_encode($sitelistRows));
+test('ReportService sitelist legacy row has all 12 keys', count($sitelistRows) === 1 && count(array_diff(App\Services\ReportService::SITELIST_COLUMNS, array_keys($sitelistRows[0]))) === 0, json_encode(array_keys($sitelistRows[0] ?? [])));
+
+// --- topic_monitor_list.txt 导入：兼容 8 列现行布局与 9 列旧版布局 ---
+echo "== topic_monitor_list import ==\n";
+$impTokenT = substr(hash_hmac('sha256', 'csrf|imptuid1', 'testcsrfsecret'), 0, 32);
+$topicFile = $dataDir . '/topic_monitor_list.txt';
+$topicJson = json_encode([
+    'git_name' => 'legacy-topic.com', 'domain' => 'legacy-topic.com', 'keyword' => 'legacy kw',
+    'pubdir' => 'article', 'status' => 'enable', 'lang' => 'vi', 'geo' => 'JP', 'lasttask' => '20260101',
+], JSON_UNESCAPED_UNICODE);
+// 旧版 9 列 = topic_bulk_update_via_import.php 的列序，geo 为独立列
+$topicLegacyLine = implode('|', [
+    'LEGACYTOPIC1', 'legacy-topic.com', 'legacy-topic.com', 'legacy kw', 'article', 'enable', 'vi', 'JP', $topicJson,
+]);
+$parsedTopicLegacy = App\Services\TopicService::parseMonitorLine($topicLegacyLine);
+test('parseMonitorLine accepts legacy 9 columns', is_array($parsedTopicLegacy) && $parsedTopicLegacy['legacy'] === true, var_export($parsedTopicLegacy === null, true));
+test('parseMonitorLine legacy geo from column not json', is_array($parsedTopicLegacy) && $parsedTopicLegacy['geo'] === 'JP', json_encode($parsedTopicLegacy['geo'] ?? null));
+test('parseMonitorLine legacy maps git_name/domain/keyword', is_array($parsedTopicLegacy) && $parsedTopicLegacy['git_name'] === 'legacy-topic.com' && $parsedTopicLegacy['domain'] === 'legacy-topic.com' && $parsedTopicLegacy['keyword'] === 'legacy kw', json_encode([$parsedTopicLegacy['git_name'] ?? null, $parsedTopicLegacy['keyword'] ?? null]));
+test('parseMonitorLine legacy reads lasttask from json', is_array($parsedTopicLegacy) && $parsedTopicLegacy['lasttask'] === '20260101', json_encode($parsedTopicLegacy['lasttask'] ?? null));
+$topicCurrentLine = implode('|', [
+    'CURRENTTOPIC1', 'current kw', 'enable', 'cur-topic.com', 'cur-topic.com', 'article', 'en', $topicJson,
+]);
+$parsedTopicCurrent = App\Services\TopicService::parseMonitorLine($topicCurrentLine);
+test('parseMonitorLine accepts current 8 columns', is_array($parsedTopicCurrent) && $parsedTopicCurrent['legacy'] === false, json_encode($parsedTopicCurrent['legacy'] ?? null));
+test('parseMonitorLine current geo from json fallback', is_array($parsedTopicCurrent) && $parsedTopicCurrent['geo'] === 'JP', json_encode($parsedTopicCurrent['geo'] ?? null));
+test('parseMonitorLine rejects wrong column count', App\Services\TopicService::parseMonitorLine('a|b|c') === null, 'should be null');
+test('parseMonitorLine rejects invalid json tail', App\Services\TopicService::parseMonitorLine(implode('|', array_fill(0, 8, 'x'))) === null, 'should be null');
+
+file_put_contents($topicFile, $topicLegacyLine . "\n");
+$html = runRequest([], ['action' => 'import-topic', 'csrf_token' => $impTokenT], 'POST', ['siteops_uid' => 'imptuid1'], '/topiclist.php');
+$payload = json_decode($html, true);
+$impMsg = $payload['rows'][0]['message'] ?? '';
+test('import-topic imports legacy 9-column row', is_array($payload) && ($payload['rows'][0]['ok'] ?? false) === true && strpos($impMsg, '新增 1 条') !== false, substr($html, 0, 200));
+test('import-topic reports legacy row count', strpos($impMsg, '旧版 9 列格式') !== false, substr($html, 0, 200));
+$legacyTopicRow = db("SELECT * FROM sitetopic WHERE ctx_id = 'LEGACYTOPIC1'");
+test('import-topic persisted legacy row', count($legacyTopicRow) === 1 && $legacyTopicRow[0]['keyword'] === 'legacy kw' && $legacyTopicRow[0]['domain'] === 'legacy-topic.com', json_encode($legacyTopicRow));
+test('import-topic persisted legacy geo', count($legacyTopicRow) === 1 && $legacyTopicRow[0]['geo'] === 'JP', json_encode($legacyTopicRow[0]['geo'] ?? null));
+test('import-topic persisted legacy status not pubdir', count($legacyTopicRow) === 1 && $legacyTopicRow[0]['status'] === 'enable' && $legacyTopicRow[0]['pubdir'] === 'article', json_encode($legacyTopicRow));
+$topicExportLines = array_values(array_filter(file($topicFile, FILE_IGNORE_NEW_LINES), function ($l) { return trim($l) !== ''; }));
+$topicWidth = count($topicExportLines) ? count(explode('|', $topicExportLines[0])) : 0;
+test('export after legacy topic import writes 8 columns', $topicWidth === 8, 'width=' . $topicWidth);
+
+file_put_contents($topicFile, $topicCurrentLine . "\n");
+$html = runRequest([], ['action' => 'import-topic', 'csrf_token' => $impTokenT], 'POST', ['siteops_uid' => 'imptuid1'], '/topiclist.php');
+$payload = json_decode($html, true);
+test('import-topic imports current 8-column row', ($payload['rows'][0]['ok'] ?? false) === true && strpos($payload['rows'][0]['message'] ?? '', '新增 1 条') !== false, substr($html, 0, 200));
+$currentTopicRow = db("SELECT * FROM sitetopic WHERE ctx_id = 'CURRENTTOPIC1'");
+test('import-topic persisted current row', count($currentTopicRow) === 1 && $currentTopicRow[0]['keyword'] === 'current kw' && $currentTopicRow[0]['geo'] === 'JP', json_encode($currentTopicRow));
+
+// 全量失败时必须跳过导出，否则会用库状态覆盖用户源文件
+$badTopic1 = implode('|', ['BADTOPIC001', 'x', 'y']);
+$badTopic2 = implode('|', ['BADTOPIC002', 'p', 'q']);
+file_put_contents($topicFile, $badTopic1 . "\n" . $badTopic2 . "\n");
+$html = runRequest([], ['action' => 'import-topic', 'csrf_token' => $impTokenT], 'POST', ['siteops_uid' => 'imptuid1'], '/topiclist.php');
+$payload = json_decode($html, true);
+test('import-topic rejects all-bad file', ($payload['rows'][0]['ok'] ?? true) === false && strpos($payload['rows'][0]['message'] ?? '', '全部无法解析') !== false, substr($html, 0, 200));
+$topicAfter = trim((string)@file_get_contents($topicFile));
+test('import-topic does not overwrite source file on total failure', $topicAfter === $badTopic1 . "\n" . $badTopic2, 'source=' . $topicAfter);
+
+// ReportService::topiclist 同样需接受旧版 9 列
+file_put_contents($topicFile, $topicLegacyLine . "\n");
+$topicRows = App\Services\ReportService::parseColumns(
+    [$topicLegacyLine],
+    App\Services\ReportService::TOPICLIST_COLUMNS,
+    '',
+    App\Services\TopicService::LEGACY_EXPORT_COLUMNS
+);
+test('ReportService topiclist reads legacy 9 columns', count($topicRows) === 1 && $topicRows[0]['keyword'] === 'legacy kw', json_encode($topicRows));
+test('ReportService topiclist legacy row has all 8 keys', count($topicRows) === 1 && count(array_diff(App\Services\ReportService::TOPICLIST_COLUMNS, array_keys($topicRows[0]))) === 0, json_encode(array_keys($topicRows[0] ?? [])));
+
+// --- keyword_monitor_list.txt 导入：与 site/topic 收敛为同一套严格解析 ---
+echo "== keyword_monitor_list import ==\n";
+$impTokenK = substr(hash_hmac('sha256', 'csrf|impkuid1', 'testcsrfsecret'), 0, 32);
+$kwFile = $dataDir . '/keyword_monitor_list.txt';
+$kwJson = json_encode([
+    'git_name' => 'legacy-kw.com', 'domain' => 'legacy-kw.com', 'keyword' => 'legacy kw',
+    'pubdir' => 'article', 'status' => 'enable', 'lang' => 'vi', 'geo' => 'JP', 'lasttask' => '20260202',
+], JSON_UNESCAPED_UNICODE);
+$kwLine = implode('|', ['LEGACYKW00001', 'legacy kw', 'enable', 'legacy-kw.com', 'article', 'vi', $kwJson]);
+$parsedKw = App\Services\KeywordService::parseMonitorLine($kwLine);
+test('parseMonitorLine keyword accepts 7 columns', is_array($parsedKw) && $parsedKw['legacy'] === false, var_export($parsedKw === null, true));
+test('parseMonitorLine keyword reads geo from json', is_array($parsedKw) && $parsedKw['geo'] === 'JP', json_encode($parsedKw['geo'] ?? null));
+test('parseMonitorLine keyword reads lasttask from json', is_array($parsedKw) && $parsedKw['lasttask'] === '20260202', json_encode($parsedKw['lasttask'] ?? null));
+test('parseMonitorLine keyword maps all 6 columns', is_array($parsedKw) && $parsedKw['keyword'] === 'legacy kw' && $parsedKw['status'] === 'enable' && $parsedKw['git_name'] === 'legacy-kw.com' && $parsedKw['pubdir'] === 'article' && $parsedKw['lang'] === 'vi', json_encode($parsedKw));
+test('parseMonitorLine keyword rejects 8 columns (wrong width)', App\Services\KeywordService::parseMonitorLine($kwLine . '|extra') === null, 'should be null');
+test('parseMonitorLine keyword rejects 6 columns (wrong width)', App\Services\KeywordService::parseMonitorLine(implode('|', array_slice(explode('|', $kwLine), 0, 6))) === null, 'should be null');
+test('parseMonitorLine keyword rejects invalid json tail', App\Services\KeywordService::parseMonitorLine(implode('|', array_fill(0, 7, 'x'))) === null, 'should be null');
+test('parseMonitorLine keyword rejects empty ctx_id', App\Services\KeywordService::parseMonitorLine(implode('|', ['', 'kw', 'enable', 'g.com', 'article', 'en', $kwJson])) === null, 'should be null');
+
+file_put_contents($kwFile, $kwLine . "\n");
+$html = runRequest([], ['action' => 'import-keyword', 'csrf_token' => $impTokenK], 'POST', ['siteops_uid' => 'impkuid1'], '/seo_report.php');
+$payload = json_decode($html, true);
+test('import-keyword imports 7-column row', is_array($payload) && $payload['ok'] === true && strpos($payload['message'], '新增 1 条') !== false, substr($html, 0, 200));
+$legacyKwRow = db("SELECT * FROM keywordmonitorlist WHERE ctx_id = 'LEGACYKW00001'");
+test('import-keyword persisted row', count($legacyKwRow) === 1 && $legacyKwRow[0]['keyword'] === 'legacy kw' && $legacyKwRow[0]['git_name'] === 'legacy-kw.com', json_encode($legacyKwRow));
+test('import-keyword persisted geo from json', count($legacyKwRow) === 1 && $legacyKwRow[0]['geo'] === 'JP', json_encode($legacyKwRow[0]['geo'] ?? null));
+test('import-keyword persisted lasttask from json', count($legacyKwRow) === 1 && $legacyKwRow[0]['lasttask'] === '20260202', json_encode($legacyKwRow[0]['lasttask'] ?? null));
+$kwExportLines = array_values(array_filter(file($kwFile, FILE_IGNORE_NEW_LINES), function ($l) { return trim($l) !== ''; }));
+$kwWidth = count($kwExportLines) ? count(explode('|', $kwExportLines[0])) : 0;
+test('export after keyword import writes 7 columns', $kwWidth === 7, 'width=' . $kwWidth);
+
+// 全量失败时必须跳过导出，否则会用库状态覆盖用户源文件
+$badKw1 = implode('|', ['BADKW000001', 'x', 'y']);
+$badKw2 = implode('|', ['BADKW000002', 'p', 'q']);
+file_put_contents($kwFile, $badKw1 . "\n" . $badKw2 . "\n");
+$html = runRequest([], ['action' => 'import-keyword', 'csrf_token' => $impTokenK], 'POST', ['siteops_uid' => 'impkuid1'], '/seo_report.php');
+$payload = json_decode($html, true);
+test('import-keyword rejects all-bad file', is_array($payload) && $payload['ok'] === false && strpos($payload['message'], '全部无法解析') !== false, substr($html, 0, 200));
+$kwAfter = trim((string)@file_get_contents($kwFile));
+test('import-keyword does not overwrite source file on total failure', $kwAfter === $badKw1 . "\n" . $badKw2, 'source=' . $kwAfter);
+
+// 混入坏行时：好行仍应导入，且坏行计数正确
+file_put_contents($kwFile, $kwLine . "\n" . $badKw1 . "\n" . $badKw2 . "\n");
+$html = runRequest([], ['action' => 'import-keyword', 'csrf_token' => $impTokenK], 'POST', ['siteops_uid' => 'impkuid1'], '/seo_report.php');
+$payload = json_decode($html, true);
+test('import-keyword partial file imports valid rows only', is_array($payload) && $payload['ok'] === true && strpos($payload['message'], '失败 2 条') !== false, substr($html, 0, 200));
+
+// --- 报表 DB 回退：文件缺失或不可解析时不应空白 ---
+echo "== report DB fallback ==\n";
+@unlink($settingFile);
+$rows = App\Services\ReportService::sitelist();
+test('ReportService sitelist falls back to DB when file missing', count($rows) >= 1, 'rows=' . count($rows));
+$sitelisted = [];
+foreach ($rows as $r) { if (($r['domain'] ?? '') === 'testpoker.com') { $sitelisted = $r; break; } }
+test('ReportService sitelist fallback carries git_account', $sitelisted !== [] && array_key_exists('git_account', $sitelisted) && ($sitelisted['git_account'] ?? '') === 'felangel79', json_encode($sitelisted['git_account'] ?? null));
+test('ReportService sitelist fallback has all 12 columns', $sitelisted !== [] && count(array_diff(App\Services\ReportService::SITELIST_COLUMNS, array_keys($sitelisted))) === 0, json_encode(array_keys($sitelisted)));
+// 不可解析（列数错乱）时同样回退
+file_put_contents($settingFile, "bad|row|here\n");
+$rows = App\Services\ReportService::sitelist();
+test('ReportService sitelist falls back on unparseable file', count($rows) >= 1, 'rows=' . count($rows));
+
+@unlink($kwFile);
+$rows = App\Services\ReportService::wordlist();
+test('ReportService wordlist falls back to DB when file missing', count($rows) >= 1, 'rows=' . count($rows));
+// 用只存在于测试库的 canary 证明数据确实来自 DB，而非恰好读到别的库/文件
+$kwCanary = [];
+foreach ($rows as $r) { if (($r['ctx_id'] ?? '') === 'LEGACYKW00001') { $kwCanary = $r; break; } }
+test('ReportService wordlist fallback serves test-DB canary row', $kwCanary !== [] && $kwCanary['keyword'] === 'legacy kw', json_encode($kwCanary));
+// 不依赖具体 keyword（前面的编辑用例会改写它），直接校验任一行的键完整性
+$kwAny = $kwCanary !== [] ? $kwCanary : (count($rows) ? $rows[0] : []);
+test('ReportService wordlist fallback carries geo and lasttask', $kwAny !== [] && array_key_exists('geo', $kwAny) && array_key_exists('lasttask', $kwAny), json_encode(array_keys($kwAny)));
+test('ReportService wordlist fallback has all 7 columns', $kwAny !== [] && count(array_diff(App\Services\ReportService::WORDLIST_COLUMNS, array_keys($kwAny))) === 0, json_encode(array_keys($kwAny)));
+file_put_contents($kwFile, "bad|row|here\n");
+$rows = App\Services\ReportService::wordlist();
+test('ReportService wordlist falls back on unparseable file', count($rows) >= 1, 'rows=' . count($rows));
+
+// 三个视图在文件缺失时都不应返回空
+$json = runRequest(['format' => 'json', 'reporttype' => 'wordlist'], [], 'GET', [], '/seo_report.php');
+$payload = json_decode($json, true);
+test('report wordlist json not blank when file missing', is_array($payload) && $payload['total'] >= 1, substr($json, 0, 120));
+$json = runRequest(['format' => 'json', 'reporttype' => 'sitelist'], [], 'GET', [], '/seo_report.php');
+$payload = json_decode($json, true);
+test('report sitelist json not blank when file missing', is_array($payload) && $payload['total'] >= 1, substr($json, 0, 120));
+// 恢复导出文件，避免影响后续用例
+\App\Services\ExportService::export();
+\App\Services\KeywordService::export();
+\App\Services\TopicService::export();
 $json = runRequest(['format' => 'json', 'reporttype' => 'relateword'], [], 'GET', [], '/seo_report.php');
 $payload = json_decode($json, true);
 test('report relateword missing file empty state', is_array($payload) && $payload['total'] === 0, substr($json, 0, 120));

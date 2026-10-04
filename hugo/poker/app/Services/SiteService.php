@@ -16,6 +16,52 @@ class SiteService
         'domain', 'sns_id', 'topnav_menus', 'site_title', 'site_subtitle', 'json',
     ];
 
+    // 旧版 siteops_setting.txt 布局：EXPORT_COLUMNS 去掉 git_account（共 11 列）
+    const LEGACY_EXPORT_COLUMNS = [
+        'ctx_id', 'git_name', 'status', 'theme_type', 'languages',
+        'domain', 'sns_id', 'topnav_menus', 'site_title', 'site_subtitle', 'json',
+    ];
+
+    /**
+     * 解析 siteops_setting.txt 的一行，兼容 12 列现行布局与 11 列旧版布局。
+     * 旧版缺失的 git_account 从内嵌 json 的 git_account 补回。
+     *
+     * @return array|null 解析成功返回列=>值映射，失败返回 null
+     */
+    public static function parseSettingLine(string $line)
+    {
+        $line = trim($line);
+        if ($line === '') {
+            return null;
+        }
+        $parts = explode('|', $line);
+        $count = count($parts);
+        if ($count === count(self::EXPORT_COLUMNS)) {
+            $columns = self::EXPORT_COLUMNS;
+        } elseif ($count === count(self::LEGACY_EXPORT_COLUMNS)) {
+            $columns = self::LEGACY_EXPORT_COLUMNS;
+        } else {
+            return null;
+        }
+        $jsonRaw = $parts[$count - 1];
+        $json = json_decode($jsonRaw, true);
+        if (!is_array($json)) {
+            return null;
+        }
+        $row = array_combine($columns, $parts);
+        $row['ctx_id'] = trim($row['ctx_id']);
+        if ($row['ctx_id'] === '') {
+            return null;
+        }
+        if (!isset($row['git_account'])) {
+            $row['git_account'] = (string)($json['git_account'] ?? '');
+        }
+        $row['json'] = $jsonRaw;
+        $row['decoded'] = $json;
+        $row['legacy'] = ($columns === self::LEGACY_EXPORT_COLUMNS);
+        return $row;
+    }
+
     public static function sanitizePost(array $post)
     {
         array_walk($post, function (&$item) {

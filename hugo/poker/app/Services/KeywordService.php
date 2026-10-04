@@ -16,6 +16,56 @@ class KeywordService
         'ctx_id', 'keyword', 'status', 'git_name', 'pubdir', 'lang', 'json',
     ];
 
+    // 预留旧版布局：keywordmonitorlist 自 20240922 起一直是 7 列，
+    // 暂无历史异构格式；后续若出现，在此登记即可被 parseMonitorLine 自动识别。
+    const LEGACY_EXPORT_COLUMNS = [];
+
+    /**
+     * 解析 keyword_monitor_list.txt 的一行，按列数严格分派已知布局。
+     * 列数不匹配或 json 非法一律返回 null，避免"放行后静默错位"。
+     *
+     * @return array|null 解析成功返回列=>值映射，失败返回 null
+     */
+    public static function parseMonitorLine(string $line)
+    {
+        $line = trim($line);
+        if ($line === '') {
+            return null;
+        }
+        $parts = explode('|', $line);
+        $count = count($parts);
+        $columns = null;
+        if ($count === count(self::EXPORT_COLUMNS)) {
+            $columns = self::EXPORT_COLUMNS;
+        } elseif (self::LEGACY_EXPORT_COLUMNS !== [] && $count === count(self::LEGACY_EXPORT_COLUMNS)) {
+            $columns = self::LEGACY_EXPORT_COLUMNS;
+        }
+        if ($columns === null) {
+            return null;
+        }
+        $jsonRaw = $parts[$count - 1];
+        $json = json_decode($jsonRaw, true);
+        if (!is_array($json)) {
+            return null;
+        }
+        $row = array_combine($columns, $parts);
+        $row['ctx_id'] = trim($row['ctx_id']);
+        if ($row['ctx_id'] === '') {
+            return null;
+        }
+        // 现行布局无 geo / lasttask 列，从 json 回填
+        if (!isset($row['geo'])) {
+            $row['geo'] = (string)($json['geo'] ?? '');
+        }
+        if (!isset($row['lasttask'])) {
+            $row['lasttask'] = (string)($json['lasttask'] ?? '');
+        }
+        $row['json'] = $jsonRaw;
+        $row['decoded'] = $json;
+        $row['legacy'] = ($columns !== self::EXPORT_COLUMNS);
+        return $row;
+    }
+
     public static function sanitizePost(array $post)
     {
         array_walk($post, function (&$item) {

@@ -109,38 +109,46 @@ class ReportController
         $lines = array_filter(file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES), function ($l) { return trim($l) !== ''; });
         $records = [];
         $failed = 0;
+        $legacy = 0;
         foreach ($lines as $line) {
-            $parts = explode('|', $line);
-            if (count($parts) < 12) { $failed++; continue; }
-            $json = json_decode($parts[11], true);
-            if (!is_array($json)) { $failed++; continue; }
+            // 兼容 12 列现行布局与 11 列旧版布局（缺 git_account，从 json 补回）
+            $row = \App\Services\SiteService::parseSettingLine($line);
+            if ($row === null) { $failed++; continue; }
+            if ($row['legacy']) { $legacy++; }
+            $json = $row['decoded'];
             $records[] = [
-                'ctx_id' => trim($parts[0]),
-                'git_name' => $parts[1],
-                'git_account' => $parts[2],
-                'status' => $parts[3],
-                'theme_type' => $parts[4],
-                'languages' => $parts[5],
-                'domain' => $parts[6],
-                'sns_id' => $parts[7],
-                'topnav_menus' => $parts[8],
-                'site_title' => $parts[9],
-                'site_subtitle' => $parts[10],
+                'ctx_id' => $row['ctx_id'],
+                'git_name' => $row['git_name'],
+                'git_account' => $row['git_account'],
+                'status' => $row['status'],
+                'theme_type' => $row['theme_type'],
+                'languages' => $row['languages'],
+                'domain' => $row['domain'],
+                'sns_id' => $row['sns_id'],
+                'topnav_menus' => $row['topnav_menus'],
+                'site_title' => $row['site_title'],
+                'site_subtitle' => $row['site_subtitle'],
                 'keyword' => $json['keyword'] ?? '',
-                'theme_name' => $json['theme_name'] ?? $parts[1],
+                'theme_name' => $json['theme_name'] ?? $row['git_name'],
                 'sitedir' => $json['sitedir'] ?? '',
                 'deploy' => $json['deploy'] ?? '',
                 'hostip' => $json['hostip'] ?? '',
                 'local_deploy' => $json['local_deploy'] ?? '',
                 'local_hostip' => $json['local_hostip'] ?? '',
                 'site_logo' => $json['site_logo'] ?? '',
-                'json' => $parts[11],
+                'json' => $row['json'],
             ];
+        }
+        // 全量失败时不导出：否则会用当前库状态覆盖掉用户的源文件，且不可恢复
+        if (count($records) === 0) {
+            self::emitJson(['ok' => false, 'message' => "站点导入失败：{$failed} 行全部无法解析（列数或 json 非法），已跳过导出以保护源文件"]);
+            return;
         }
         $result = SiteRepository::batchImport($records);
         $result['failed'] += $failed;
         ExportService::export();
-        self::emitJson(['ok' => true, 'message' => "站点导入完成：新增 {$result['imported']} 条，已存在更新 {$result['skipped']} 条，失败 {$result['failed']} 条"]);
+        $legacyNote = $legacy > 0 ? "（其中 {$legacy} 行为旧版 11 列格式，git_account 取自 json）" : '';
+        self::emitJson(['ok' => true, 'message' => "站点导入完成：新增 {$result['imported']} 条，已存在更新 {$result['skipped']} 条，失败 {$result['failed']} 条{$legacyNote}"]);
     }
 
     private static function handleKeywordImport()
@@ -159,21 +167,26 @@ class ReportController
         $records = [];
         $failed = 0;
         foreach ($lines as $line) {
-            $parts = explode('|', $line);
-            if (count($parts) < 7) { $failed++; continue; }
-            $json = json_decode($parts[6], true);
-            if (!is_array($json)) { $failed++; continue; }
+            // 按列数严格分派布局，列数或 json 非法直接判失败
+            $row = \App\Services\KeywordService::parseMonitorLine($line);
+            if ($row === null) { $failed++; continue; }
+            $json = $row['decoded'];
             $records[] = [
-                'ctx_id' => trim($parts[0]),
-                'keyword' => $parts[1],
-                'status' => $parts[2],
-                'git_name' => $parts[3],
-                'pubdir' => $parts[4],
-                'lang' => $parts[5],
+                'ctx_id' => $row['ctx_id'],
+                'keyword' => $row['keyword'],
+                'status' => $row['status'],
+                'git_name' => $row['git_name'],
+                'pubdir' => $row['pubdir'],
+                'lang' => $row['lang'],
                 'geo' => $json['geo'] ?? '',
                 'lasttask' => $json['lasttask'] ?? '',
-                'json' => $parts[6],
+                'json' => $row['json'],
             ];
+        }
+        // 全量失败时不导出：否则会用当前库状态覆盖掉用户的源文件，且不可恢复
+        if (count($records) === 0) {
+            self::emitJson(['ok' => false, 'message' => "关键词导入失败：{$failed} 行全部无法解析（列数或 json 非法），已跳过导出以保护源文件"]);
+            return;
         }
         $result = KeywordRepository::batchImport($records);
         $result['failed'] += $failed;
