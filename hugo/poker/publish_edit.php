@@ -14,8 +14,7 @@ header('X-Frame-Options: SAMEORIGIN');
 try {
     \App\Support\Security::requireApiToken(true);
     Security::ensureUidCookie();
-    if (!Security::authValid() && !Security::isGitServerIp()) {
-        AuthController::handle();
+    if (!Security::requireSession()) {
         return;
     }
     Security::requirePermission('article.manage');
@@ -32,6 +31,7 @@ try {
             $list[] = [
                 'domain' => isset($site['domain']) ? (string)$site['domain'] : '',
                 'languages' => isset($site['languages']) ? (string)$site['languages'] : '',
+                'topnav_menus' => isset($site['topnav_menus']) ? (string)$site['topnav_menus'] : '',
             ];
         }
         header('Content-Type: application/json; charset=utf-8');
@@ -47,7 +47,9 @@ try {
         $post = ArticleService::sanitizePost($_POST);
         // 保持原 post_uuid
         if ($eid !== '') $post['post_uuid'] = $eid;
-        $json = ArticleService::buildJson($post);
+        // 以磁盘上的原 JSON 为底，只覆盖表单里调整过的字段，其余键保持不变
+        $base = $eid !== '' ? ArticleService::loadJsonForEdit($eid) : null;
+        $json = ArticleService::buildJson($post, is_array($base) ? $base : []);
         // seodata 落盘
         $ctxId = $json['post_uuid'];
         $seoDir = Config::dataDir() . '/seodata/json';
@@ -60,12 +62,9 @@ try {
                 'INSERT OR REPLACE INTO "aigc_status" ("ctx_id","keyword","lang","pubdomain","createAt","publishAt") VALUES (:c,:k,:l,:p,:ca,:pa)',
                 [':c'=>$rep['ctx_id'],':k'=>$rep['keyword'],':l'=>$rep['lang'],':p'=>$rep['pubdomain'],':ca'=>$rep['createAt'],':pa'=>$rep['publishAt']]
             );
-            // 刷新缓存
+            // 刷新缓存（流式写文件，整表不驻留内存）
             try {
-                $rows = \App\Database::fetchAll('SELECT * FROM "aigc_status" ORDER BY "publishAt" DESC');
-                $f = Config::dataDir() . '/seodata/aigc_status.json';
-                file_put_contents($f.'.tmp', json_encode($rows, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
-                @rename($f.'.tmp', $f);
+                \App\Repositories\AigcStatusRepository::writeCacheFile(Config::dataDir() . '/seodata/aigc_status.json');
             } catch (\Throwable $e) {}
         }
         // 同时更新 article 表（复用既有逻辑，存在则更新）
@@ -79,40 +78,45 @@ try {
         return;
     }
 
-    // GET：加载 seodata/json
+    // GET：加载现有 JSON（seodata/json 优先，其次 json/）
     if ($eid === '') {
         http_response_code(400);
         render('error', ['message' => '缺少 eid']);
         return;
     }
-    $file = Config::dataDir() . '/seodata/json/' . $eid . '.json';
-    if (!is_file($file)) {
+    $data = ArticleService::loadJsonForEdit($eid);
+    if ($data === null) {
         http_response_code(404);
         render('error', ['message' => 'JSON 不存在: ' . $eid]);
         return;
     }
-    $data = json_decode((string)file_get_contents($file), true);
-    if (is_array($data) && isset($data[0]) && is_array($data[0])) $data = $data[0];
-    if (!is_array($data)) {
-        http_response_code(500);
-        render('error', ['message' => 'JSON 解析失败']);
-        return;
+    // 保存名称：优先 savename，为空/缺失时回退到 slug（两者是同一项）
+    // 兼容 text 为字符串/数组两种形态——原直接 ['text'][0] 在字符串时只取到首字符（value="c"）
+    $savename = ArticleService::textFirst($data['savename'] ?? null);
+    if ($savename === '') {
+        $savename = ArticleService::textFirst($data['slug'] ?? null);
+    }
+    $title = ArticleService::textFirst($data['title'] ?? null);
+    if ($title === '' && isset($data['topic'])) {
+        $title = (string)$data['topic'];
     }
     // 映射到 article_form 的 $form
     $form = [
         'ctx_id' => $eid,
         'url' => $data['url'] ?? '',
-        'title' => $data['title']['text'][0] ?? ($data['topic'] ?? ''),
-        'static_thumbnail' => $data['static_thumbnail']['text'][0] ?? '',
-        'iframesrc' => isset($data['iframesrc']['text']) ? implode(',', (array)$data['iframesrc']['text']) : '',
-        'tags' => isset($data['tags']['text']) ? implode(',', (array)$data['tags']['text']) : '',
-        'keyword' => isset($data['keywords']['text']) ? implode(',', (array)$data['keywords']['text']) : (isset($data['topic']) ? (string)$data['topic'] : ''),
-        'description' => $data['description']['text'][0] ?? '',
-        'content' => $data['content']['html'][0] ?? '',
+        'title' => $title,
+        'static_thumbnail' => ArticleService::textFirst($data['static_thumbnail'] ?? null),
+        'iframesrc' => implode(',', ArticleService::textValues($data['iframesrc'] ?? null)),
+        'tags' => implode(',', ArticleService::textValues($data['tags'] ?? null)),
+        'keyword' => count(ArticleService::textValues($data['keywords'] ?? null)) > 0
+            ? implode(',', ArticleService::textValues($data['keywords'] ?? null))
+            : (isset($data['topic']) ? (string)$data['topic'] : ''),
+        'description' => ArticleService::textFirst($data['description'] ?? null),
+        'content' => ArticleService::htmlFirst($data['content'] ?? null),
         'lang' => $data['lang'] ?? '',
         'series' => $data['series'] ?? '',
         'pubdir' => $data['pubdir'] ?? '',
-        'savename' => $data['savename']['text'][0] ?? '',
+        'savename' => $savename,
         'pubdomain' => $data['pubdomain'] ?? [],
         'globalpublish' => $data['globalpublish'] ?? 'no',
         'translate_to_langs' => $data['translate_to_langs'] ?? [],
@@ -124,8 +128,8 @@ try {
     // 复用文章编辑 UI，提交仍到本页
     // 需覆盖表单 action 为 publish_edit.php?eid=...
     echo '<div class="alert alert-info small">正在编辑 AIGC 生成的 JSON（seodata/json/'.$eid.'.json），提交将同步更新 JSON 与 aigc_status 索引。</div>';
-    // 手动渲染表单，action 指向本页
-    render('article_form', ['form'=>$form,'config'=>$config,'sites'=>$sites,'csrf_token'=>Security::csrfToken()]);
+    // 手动渲染表单，action 指向本页；json_edit 模式隐藏发布/自动翻译开关并保留原配置值
+    render('article_form', ['form'=>$form,'config'=>$config,'sites'=>$sites,'csrf_token'=>Security::csrfToken(),'json_edit'=>true]);
     echo '<script>document.getElementById("wechatpost").action="publish_edit.php?eid='.htmlspecialchars($eid).'";</script>';
     render('footer');
     render('layout_tail');

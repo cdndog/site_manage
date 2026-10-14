@@ -47,7 +47,7 @@
             </div>
             <div class="col-md-6 col-xs-12">
                 <label for="post_domain">发布到站点(域名)</label>
-                <select class="selectpicker form-control" id="post_domain" name="post_domain" size="1" data-show-subtext="true" data-live-search="true" required>
+                <select class="selectpicker form-control" id="post_domain" name="post_domain" data-id="post_domain" size="1" data-show-subtext="true" data-live-search="true" required>
                     <option data-subtext="">Choose a Domain</option>
                 <?php foreach ($sites as $site) :?>
                     <?php
@@ -86,10 +86,24 @@
         </div>
         <div class="col-md-3 col-xs-12">
           <label for="post_pubdir">发布目录</label>
-          <select class="selectpicker form-control" id="post_pubdir" name="post_pubdir" required>
-            <?php foreach ($config['pubdir'] as $value): ?>
-            <option value="<?php echo e($value); ?>"<?php echo $form['post_pubdir'] === $value ? ' selected' : ''; ?>><?php echo e($value); ?></option>
-            <?php endforeach; ?>
+          <select class="selectpicker form-control" id="post_pubdir" name="post_pubdir" data-id="post_pubdir" data-show-subtext="true" required>
+            <?php
+            $pubdirCurrent = isset($form['post_pubdir']) ? (string)$form['post_pubdir'] : '';
+            $pubdirOptions = (isset($config['pubdir']) && is_array($config['pubdir'])) ? $config['pubdir'] : [];
+            $pubdirMatched = false;
+            foreach ($pubdirOptions as $pubdirOption) {
+                if (strtolower((string)$pubdirOption) === strtolower($pubdirCurrent)) {
+                    $pubdirMatched = true;
+                    break;
+                }
+            }
+            foreach ($pubdirOptions as $value): ?>
+            <option value="<?php echo e($value); ?>"<?php echo strtolower((string)$value) === strtolower($pubdirCurrent) && $pubdirCurrent !== '' ? ' selected' : ''; ?>><?php echo e($value); ?></option>
+            <?php endforeach;
+            // 下拉里没有与配置值对应的选项时补一个（如站点菜单项），避免保存时被首个配置项覆盖
+            if (!$pubdirMatched && $pubdirCurrent !== ''): ?>
+            <option data-subtext="配置值" value="<?php echo e($pubdirCurrent); ?>" selected><?php echo e($pubdirCurrent); ?></option>
+            <?php endif; ?>
           </select>
         </div>
         <div class="col-md-3 col-xs-12">
@@ -109,6 +123,20 @@
         <button type="submit" class="btn btn-primary px-5"><i class="bi bi-check-circle mr-1"></i>提交入库</button>
     </div>
 </form>
+<script src="js/sops-site-menus.js"></script>
+<script>
+    // 选定发布到站点(域名)后，异步拉取该站点的顶部菜单(topnav_menus)追加为「发布目录」的可选项
+    (function () {
+        var form = document.getElementById('formtable');
+        if (!form) return;
+        var token = form.querySelector('input[name="csrf_token"]');
+        sopsAttachSiteMenus({
+            triggerId: 'post_domain',
+            targetId: 'post_pubdir',
+            csrfToken: token ? token.value : ''
+        });
+    })();
+</script>
   </div>
 </div>
 

@@ -33,11 +33,14 @@ class TopicController
         try {
             Security::requireApiToken(true);
             Security::ensureUidCookie();
-            if (!Security::authValid() && !Security::isGitServerIp()) {
-                AuthController::handle();
+            if (!Security::requireSession()) {
                 return;
             }
             Security::requirePermission('topic.manage');
+            if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'site_list') {
+                self::handleSiteList();
+                return;
+            }
             render('layout_head', ['page_title' => '话题录入']);
             render('header');
             if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -116,26 +119,55 @@ class TopicController
         ]);
     }
 
-    public static function dispatchList()
+    private static function handleSiteList()
     {
-        Security::requireApiToken(true);
-        Security::requirePermission('topic.view');
-        $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
-        if ($method === 'POST' && isset($_POST['action'])) {
-            if ($_POST['action'] === 'delete-topic') {
-                self::handleTopicDelete();
-                return;
-            }
-            if ($_POST['action'] === 'import-topic') {
-                self::handleTopicImport();
-                return;
-            }
-        }
-        $data = self::listData();
-        if ($data === null) {
+        if (!Security::csrfVerify(Security::requestToken())) {
+            self::emitJson(['total' => 0, 'rows' => [['ok' => false, 'message' => 'CSRF token invalid']]]);
             return;
         }
-        self::shell('话题列表', 'topic_list', $data);
+        $list = [];
+        foreach (SiteRepository::all() as $site) {
+            $list[] = [
+                'domain' => isset($site['domain']) ? (string)$site['domain'] : '',
+                'languages' => isset($site['languages']) ? (string)$site['languages'] : '',
+                'topnav_menus' => isset($site['topnav_menus']) ? (string)$site['topnav_menus'] : '',
+            ];
+        }
+        self::emitJson(['total' => count($list), 'rows' => $list]);
+    }
+
+    public static function dispatchList()
+    {
+        try {
+            Security::requireApiToken(true);
+            Security::requirePermission('topic.view');
+            $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+            if ($method === 'POST' && isset($_POST['action'])) {
+                if ($_POST['action'] === 'delete-topic') {
+                    self::handleTopicDelete();
+                    return;
+                }
+                if ($_POST['action'] === 'delete-topics') {
+                    self::handleTopicsDelete();
+                    return;
+                }
+                if ($_POST['action'] === 'update-topics') {
+                    self::handleTopicsUpdate();
+                    return;
+                }
+                if ($_POST['action'] === 'import-topic') {
+                    self::handleTopicImport();
+                    return;
+                }
+            }
+            $data = self::listData();
+            if ($data === null) {
+                return;
+            }
+            self::shell('话题列表', 'topic_list', $data);
+        } catch (\Throwable $e) {
+            renderErrorPage($e);
+        }
     }
 
     private static function handleTopicImport()
@@ -202,15 +234,137 @@ class TopicController
         self::emitJson(['total' => 1, 'rows' => [['ok' => true, 'message' => 'deleted']]]);
     }
 
-    public static function dispatchTable()
+    /**
+     * 解析批量操作的 ctx_ids：支持数组（ctx_ids[]=a&ctx_ids[]=b）或逗号分隔字符串，去空去重。
+     */
+    private static function parseCtxIds(): array
     {
-        Security::requireApiToken(true);
-        Security::requirePermission('topic.view');
-        $data = self::tableData();
-        if ($data === null) {
+        $raw = isset($_POST['ctx_ids']) ? $_POST['ctx_ids'] : '';
+        $list = is_array($raw) ? $raw : explode(',', (string)$raw);
+        $ids = [];
+        foreach ($list as $item) {
+            $id = trim((string)$item);
+            if ($id !== '') {
+                $ids[$id] = true;
+            }
+        }
+        return array_keys($ids);
+    }
+
+    /**
+     * 批量删除：逐条校验存在后删除，最后统一导出一次（与单条删除行为一致，仅省略 N 次全量导出）。
+     * 不存在的 id 不算失败，计入 missing 在 message 里说明。
+     */
+    private static function handleTopicsDelete()
+    {
+        Security::requirePermission('topic.manage');
+        if (!Security::csrfVerify(isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '')) {
+            self::emitJson(['total' => 0, 'rows' => [['ok' => false, 'message' => 'CSRF token invalid']]]);
             return;
         }
-        self::shell('话题报表', 'topic_table', $data);
+        $ctxIds = self::parseCtxIds();
+        if (count($ctxIds) === 0) {
+            self::emitJson(['total' => 0, 'rows' => [['ok' => false, 'message' => '未选择话题']]]);
+            return;
+        }
+        $deleted = 0;
+        $missing = 0;
+        foreach ($ctxIds as $ctxId) {
+            if (TopicRepository::byCtxId($ctxId) === null) {
+                $missing++;
+                continue;
+            }
+            TopicRepository::deleteByCtxId($ctxId);
+            $deleted++;
+        }
+        try { TopicService::export(); } catch (\Throwable $e) { /* export fails silently */ }
+        $note = $missing > 0 ? "，{$missing} 条不存在已跳过" : '';
+        self::emitJson(['total' => count($ctxIds), 'rows' => [[
+            'ok' => true,
+            'message' => "批量删除完成：已删除 {$deleted} 条{$note}",
+            'deleted' => $deleted,
+            'missing' => $missing,
+        ]]]);
+    }
+
+    /**
+     * 批量编辑：把提交的非空字段统一写到所有选中话题。
+     * 字段白名单 = 页面可编辑列；空值字段跳过（不覆盖原值）；逐条独立提交，单条失败不中断其余。
+     */
+    private static function handleTopicsUpdate()
+    {
+        Security::requirePermission('topic.manage');
+        if (!Security::csrfVerify(isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '')) {
+            self::emitJson(['total' => 0, 'rows' => [['ok' => false, 'message' => 'CSRF token invalid']]]);
+            return;
+        }
+        $ctxIds = self::parseCtxIds();
+        if (count($ctxIds) === 0) {
+            self::emitJson(['total' => 0, 'rows' => [['ok' => false, 'message' => '未选择话题']]]);
+            return;
+        }
+        $editable = ['keyword', 'git_name', 'domain', 'pubdir', 'status', 'lang', 'geo', 'lasttask'];
+        $fields = [];
+        foreach ($editable as $column) {
+            if (!isset($_POST[$column])) {
+                continue;
+            }
+            // 与录入页 sanitizePost 一致：值内竖线剔除，否则会破坏 topic_monitor_list.txt 的管道分隔导出
+            $value = trim(str_replace('|', '', (string)$_POST[$column]));
+            if ($value !== '') {
+                $fields[$column] = $value;
+            }
+        }
+        if (count($fields) === 0) {
+            self::emitJson(['total' => 0, 'rows' => [['ok' => false, 'message' => '没有可修改的字段（提交值全为空）']]]);
+            return;
+        }
+        $updated = 0;
+        $missing = 0;
+        $failed = 0;
+        foreach ($ctxIds as $ctxId) {
+            $record = TopicRepository::byCtxId($ctxId);
+            if ($record === null) {
+                $missing++;
+                continue;
+            }
+            foreach ($fields as $column => $value) {
+                $record[$column] = $value;
+            }
+            $record['ctx_id'] = $ctxId;
+            try {
+                // 部分更新：只写提交的字段，json 按合并结果重算（upsertByTopic 内建）
+                TopicRepository::upsertByTopic($record, array_keys($fields));
+                $updated++;
+            } catch (\Throwable $e) {
+                $failed++;
+            }
+        }
+        try { TopicService::export(); } catch (\Throwable $e) { /* export fails silently */ }
+        $note = $missing > 0 ? "，{$missing} 条不存在已跳过" : '';
+        $note .= $failed > 0 ? "，{$failed} 条写入失败（可能唯一键冲突）" : '';
+        self::emitJson(['total' => count($ctxIds), 'rows' => [[
+            'ok' => $updated > 0 || $missing > 0,
+            'message' => "批量编辑完成：更新 {$updated} 条{$note}",
+            'updated' => $updated,
+            'missing' => $missing,
+            'failed' => $failed,
+        ]]]);
+    }
+
+    public static function dispatchTable()
+    {
+        try {
+            Security::requireApiToken(true);
+            Security::requirePermission('topic.view');
+            $data = self::tableData();
+            if ($data === null) {
+                return;
+            }
+            self::shell('话题报表', 'topic_table', $data);
+        } catch (\Throwable $e) {
+            renderErrorPage($e);
+        }
     }
 
     private static function listData()
@@ -231,6 +385,8 @@ class TopicController
             'per_page' => $perPage,
             'search' => $search,
             'csrf_token' => Security::csrfToken(),
+            // 批量编辑弹窗的值下拉（status/lang/geo/pubdir）取自字典配置
+            'config' => Config::all(),
         ];
     }
 
@@ -333,8 +489,7 @@ class TopicController
         header('X-Frame-Options: SAMEORIGIN');
         try {
             Security::ensureUidCookie();
-            if (!Security::authValid() && !Security::isGitServerIp()) {
-                AuthController::handle();
+            if (!Security::requireSession()) {
                 return;
             }
             Security::requirePermission('topic.view');

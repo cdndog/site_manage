@@ -104,9 +104,18 @@ if (count($crumbs) === 0) {
     </ul>
   </nav>
   <div class="sops-sidebar-foot">
-    <i class="bi bi-clock-history mr-1" aria-hidden="true"></i><?php echo date('Y-m-d H:i'); ?>
+    <i class="bi bi-clock-history mr-1" aria-hidden="true"></i><?php
+    // 侧栏时钟按【系统管理 → 显示时区】渲染（time() 为 epoch，时区无关，仅换算显示）
+    try {
+        echo e((new DateTimeImmutable('now', new DateTimeZone(\App\Config::displayTimezone())))->format('Y-m-d H:i'));
+    } catch (\Throwable $e) {
+        echo e(date('Y-m-d H:i'));
+    }
+    ?>
   </div>
 </aside>
+<!-- 移动端抽屉遮罩：body[data-mobile-nav=open] 时显示，点击关闭导航（见 css/theme.css + js/siteops.js） -->
+<div class="sops-nav-backdrop" id="sopsNavBackdrop" aria-hidden="true" hidden></div>
 <main class="sops-main">
   <div class="sops-topbar">
     <button type="button" class="sops-sidebar-toggle" id="sidebarToggle" aria-label="折叠侧边栏" aria-expanded="true" title="折叠侧边栏">
@@ -126,4 +135,13 @@ if (count($crumbs) === 0) {
         <?php endforeach; ?>
       </ol>
     </nav></span>
+    <?php $sopsTopUser = \App\Support\Security::authUsername(); ?>
+    <?php if ($sopsTopUser !== ''): ?>
+    <div class="sops-topbar-actions">
+      <span class="text-muted d-none d-sm-inline"><i class="bi bi-person-circle mr-1" aria-hidden="true"></i><?php echo e($sopsTopUser); ?></span>
+      <a class="footer-logout small" href="logout.php?csrf_token=<?php echo e(\App\Support\Security::csrfToken()); ?>" title="登出当前账号">
+        <i class="bi bi-box-arrow-right mr-1" aria-hidden="true"></i>登出
+      </a>
+    </div>
+    <?php endif; ?>
   </div>

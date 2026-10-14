@@ -18,6 +18,10 @@ if (!function_exists('e')) {
 if (!function_exists('renderErrorPage')) {
     function renderErrorPage(\Throwable $e)
     {
+        if (\App\Support\Security::loginRendered()) {
+            // 登录页/登录提示已输出（会话失效场景），不再追加错误页
+            return;
+        }
         if ($e instanceof \App\Support\PermissionDenied) {
             if (!headers_sent()) {
                 http_response_code(403);

@@ -85,10 +85,24 @@
         </div>
         <div class="col-md-3 col-xs-12">
           <label class="badge badge-light my-2" for="post_pubdir"><i class="bi bi-folder-open mr-1" aria-hidden="true"></i>保存目录：<b class="text-muted">（文章发布到的网站目录）</b></label>
-          <select class="selectpicker form-control form-control-sm" id="post_pubdir" name="post_pubdir" data-show-subtext="true" data-live-search="true">
-            <?php foreach ((isset($config['pubdir']) && is_array($config['pubdir'])) ? $config['pubdir'] : [] as $label => $value): ?>
-            <option data-subtext="<?php echo e($label); ?>"<?php echo strtolower($value) === strtolower($form['pubdir']) ? ' selected' : ''; ?>><?php echo e($value); ?></option>
-            <?php endforeach; ?>
+          <select class="selectpicker form-control form-control-sm" id="post_pubdir" name="post_pubdir" data-show-subtext="true" data-live-search="true" data-id="post_pubdir">
+            <?php
+            $pubdirCurrent = isset($form['pubdir']) ? (string)$form['pubdir'] : '';
+            $pubdirOptions = (isset($config['pubdir']) && is_array($config['pubdir'])) ? $config['pubdir'] : [];
+            $pubdirMatched = false;
+            foreach ($pubdirOptions as $pubdirOption) {
+                if (strtolower((string)$pubdirOption) === strtolower($pubdirCurrent)) {
+                    $pubdirMatched = true;
+                    break;
+                }
+            }
+            foreach ($pubdirOptions as $label => $value): ?>
+            <option data-subtext="<?php echo e($label); ?>"<?php echo strtolower((string)$value) === strtolower($pubdirCurrent) ? ' selected' : ''; ?>><?php echo e($value); ?></option>
+            <?php endforeach;
+            // 下拉里没有与配置值对应的选项时补一个，避免保存时被首个配置项覆盖
+            if (!$pubdirMatched && ($pubdirCurrent !== '' || !empty($json_edit))): ?>
+            <option data-subtext="<?php echo $pubdirCurrent !== '' ? '配置值' : '未设置'; ?>" value="<?php echo e($pubdirCurrent); ?>" selected><?php echo $pubdirCurrent !== '' ? e($pubdirCurrent) : '（未设置）'; ?></option>
+            <?php endif; ?>
           </select>
         </div>
         <div class="col-md-3 col-xs-12">
@@ -102,11 +116,27 @@
             <div class="col-md-12 col-xs-12">
             <label class="badge badge-light my-2" for="post_pubdomain"><i class="bi bi-link-45deg mr-1" aria-hidden="true"></i>关联站点：<b class="text-muted">(将内容发布到选定域名（支持多选），留空默认不发布，选择global发布到列表中所有网站)</b></label>
             <div class="input-group mb-3">
-                <select class="selectpicker form-control form-control-sm" id="post_pubdomain" name="post_pubdomain[]" data-show-subtext="true" data-live-search="true" multiple>
+                <select class="selectpicker form-control form-control-sm" id="post_pubdomain" name="post_pubdomain[]" data-show-subtext="true" data-live-search="true" data-id="post_pubdomain" multiple>
                 <option data-subtext="global"<?php if (in_array(strtolower('global'), array_map('strtolower', (array)$form['pubdomain']), true)) { echo ' selected'; } ?>>global</option>
                 <?php foreach ($sites as $site): ?>
                 <option data-subtext="<?php echo e(isset($site['domain']) ? $site['domain'] . '(' . (isset($site['languages']) ? $site['languages'] : '') . ')' : ''); ?>"<?php if (in_array(strtolower(isset($site['domain']) ? $site['domain'] : ''), array_map('strtolower', (array)$form['pubdomain']), true)) { echo ' selected'; } ?>><?php echo e(isset($site['domain']) ? $site['domain'] : ''); ?></option>
                 <?php endforeach; ?>
+                <?php
+                // 已配置但不在站点列表里的关联域名：补成选中项，避免保存时被丢弃
+                $knownDomainsLower = ['global'];
+                foreach ($sites as $site) {
+                    $knownDomainsLower[] = strtolower(isset($site['domain']) ? (string)$site['domain'] : '');
+                }
+                foreach ((array)$form['pubdomain'] as $formDomain) {
+                    $formDomain = (string)$formDomain;
+                    if ($formDomain === '' || in_array(strtolower($formDomain), $knownDomainsLower, true)) {
+                        continue;
+                    }
+                    ?>
+                <option data-subtext="原配置值" selected><?php echo e($formDomain); ?></option>
+                    <?php
+                }
+                ?>
                 </select>
               <div class="input-group-append">
                 <button class="btn btn-sm btn-warning" type="button" id="reloadSitesBtn" title="刷新列表">
@@ -117,28 +147,24 @@
             </div>
         </div>
     </div>
-    <div class="form-group">
-        <label class="badge badge-light my-2" for="autopublish"><i class="bi bi-send mr-1" aria-hidden="true"></i>发布文章：<b class="text-muted">(勾选☑️【启用】时，发布脚本调用该内容发布到指定网站；没有勾选时：只保存不发布)</b></label>
-        <div class="checkbox mt-2" id="autopublish">
-            <input type="checkbox" id="post_globalpublish" name="post_globalpublish" value="yes"<?php if ($form['globalpublish'] === 'yes') { echo ' checked'; } ?>> <e class="badge badge-primary">启用</e>
-        </div>
-        <label class="badge badge-light my-2" for="autotranslate"><i class="bi bi-globe2 mr-1" aria-hidden="true"></i>自动翻译：<span class="text-muted">(勾选以下国家语言启用翻译语言)</span></label>
-        <div class="row m-auto bg-light" id="autotranslate">
-            <?php foreach ((isset($config['translateto']) && is_array($config['translateto'])) ? $config['translateto'] : [] as $value => $label): ?>
-            <div class="col-xs-12 col-sm-2">
-                <div class="checkbox text-truncate">
-                    <label>
-                        <input type="checkbox"<?php if (in_array($value, (array)$form['translate_to_langs'], true)) { echo ' checked'; } ?> id="<?php echo e('post_translate_to_langs_' . $value); ?>" name="post_translate_to_langs[]" value="<?php echo e(trim($value)); ?>"><span class="badge badge-light"><?php echo e($label); ?></span>
-                    </label>
-                </div>
-            </div>
-            <?php endforeach; ?>
-        </div>
-    </div>
     <div class="d-flex justify-content-end mt-4">
         <button type="submit" class="btn btn-primary px-5" id="submitBtn"><i class="bi bi-check-circle mr-1" aria-hidden="true"></i>提交</button>
     </div>
 </form>
+<script src="js/sops-site-menus.js"></script>
+<script>
+    // 选定关联域名后，异步拉取该站点的顶部菜单(post_topnavmenus)追加为「保存目录」的可选项
+    (function () {
+        var form = document.getElementById('wechatpost');
+        if (!form) return;
+        var token = form.querySelector('input[name="csrf_token"]');
+        sopsAttachSiteMenus({
+            triggerId: 'post_pubdomain',
+            targetId: 'post_pubdir',
+            csrfToken: token ? token.value : ''
+        });
+    })();
+</script>
   </div>
 </div>
 </div>

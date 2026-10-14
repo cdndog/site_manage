@@ -34,6 +34,7 @@
           xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
           xhr.onreadystatechange=function(){
             if(xhr.readyState!==4) return;
+            if(xhr.status===401) return; // 登录态失效：由 sopsSessionExpired 统一提示并跳转
             exec.disabled=false; exec.innerHTML='<i class="bi bi-cloud-download mr-1"></i>确定导入';
             window.jQuery(modal).modal('hide');
             var msg='导入失败（HTTP '+xhr.status+'）', isError=true;
@@ -66,8 +67,8 @@
     </table>
     <script>
       function publishTimeFormatter(value) {
-        if (!value) return '';
-        return String(value).replace('T',' ').replace('Z','');
+        // 降级：helper 缺失时显示原值，避免抛错中断表格渲染
+        return typeof window.sopsFormatTime === 'function' ? window.sopsFormatTime(value) : (value == null ? '' : String(value));
       }
       function publishCtxFormatter(value) {
         if (!value) return '';
@@ -98,6 +99,7 @@
         xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
         xhr.onreadystatechange=function(){
           if(xhr.readyState===4){
+            if(xhr.status===401) return; // 登录态失效：由 sopsSessionExpired 统一提示并跳转
             if(xhr.status===200){
               var resp=null; try{resp=JSON.parse(xhr.responseText);}catch(e){}
               var ok=resp&&resp.rows&&resp.rows[0]&&resp.rows[0].ok;

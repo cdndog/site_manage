@@ -42,26 +42,34 @@ if ($q === '') {
 }
 
 if ($q === 'all') {
-    $rows = Database::fetchAll('SELECT "ctx_id", "json" FROM "sitetopic" ORDER BY "id"');
+    $sql = 'SELECT "ctx_id", "json" FROM "sitetopic" ORDER BY "id"';
+    $params = [];
 } else {
     // t 可为任意列的值：ctx_id / keyword / git_name / domain / pubdir / status / lang / geo / lasttask / json
     // 精确匹配所有列，兼容类似 site_query 的全列模糊能力
     // PG：json 列为 JSONB，需 ::text 转型才能 ILIKE
     $jsonLike = Database::isPg() ? '"json"::text ILIKE :like' : '"json" LIKE :like';
-    $rows = Database::fetchAll(
-        'SELECT "ctx_id", "json" FROM "sitetopic" WHERE "ctx_id" = :q OR "keyword" = :q OR "git_name" = :q OR "domain" = :q OR "pubdir" = :q OR "status" = :q OR "lang" = :q OR "geo" = :q OR "lasttask" = :q OR ' . $jsonLike . ' ORDER BY "id"',
-        ['q' => $q, 'like' => '%' . $q . '%']
-    );
+    $sql = 'SELECT "ctx_id", "json" FROM "sitetopic" WHERE "ctx_id" = :q OR "keyword" = :q OR "git_name" = :q OR "domain" = :q OR "pubdir" = :q OR "status" = :q OR "lang" = :q OR "geo" = :q OR "lasttask" = :q OR ' . $jsonLike . ' ORDER BY "id"';
+    $params = ['q' => $q, 'like' => '%' . $q . '%'];
 }
 
-$response = [];
-foreach ($rows as $row) {
+// 流式输出：t=all 是全表导出（json 列可能数 MB/行），
+// 逐行 decode+encode 直接写出，峰值内存≈单行大小（旧行为整表驻留 + json_encode 三份副本，128MB 被打爆）。
+// 输出 '[' 在拿到第一行之后，DB 异常发生在任何字节写出之前（保持 500 响应体干净）。
+$started = false;
+foreach (Database::each($sql, $params) as $row) {
+    if ($started) {
+        echo ',';
+    } else {
+        echo '[';
+        $started = true;
+    }
     $jsondata = json_decode((string)$row['json'], true);
     if (!is_array($jsondata)) {
         $jsondata = [];
     }
-    $response[] = array('id' => (string)$row['ctx_id']) + $jsondata;
+    echo json_encode(array('id' => (string)$row['ctx_id']) + $jsondata);
+    unset($row, $jsondata);
 }
-
 // 无匹配时返回 200 + []，而非空白 body（调用方恒定拿到数组）
-echo json_encode($response);
+echo $started ? ']' : '[]';

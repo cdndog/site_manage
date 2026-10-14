@@ -113,3 +113,42 @@ document.addEventListener('click', function (ev) {
     s.textContent = '@keyframes sopsToastIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}';
     document.head.appendChild(s);
 })();
+/**
+ * 登录态失效统一处理：
+ *   服务端在会话过期时对页面请求返回登录页、对 XHR/JSON 请求返回 401 + {"message":"..."}。
+ *   此处统一拦截 401：提示后刷新当前页（刷新后页面请求即渲染登录页）。
+ */
+var sopsSessionExpired = (function () {
+    var pending = false;
+    return function (message) {
+        if (pending) return;
+        pending = true;
+        var msg = message || '登录状态已失效，请登录后再操作';
+        if (typeof sopsToast === 'function') {
+            sopsToast(msg, 'danger', 5000);
+        }
+        setTimeout(function () { window.location.reload(); }, 800);
+    };
+})();
+
+(function () {
+    if (typeof window === 'undefined' || !window.XMLHttpRequest) return;
+    var origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function () {
+        var xhr = this;
+        if (xhr.__sopsAuthHook) {
+            return origSend.apply(xhr, arguments);
+        }
+        xhr.__sopsAuthHook = true;
+        xhr.addEventListener('loadend', function () {
+            if (xhr.status !== 401) return;
+            var msg = '';
+            try {
+                var body = JSON.parse(xhr.responseText);
+                if (body && body.message) msg = String(body.message);
+            } catch (e) {}
+            sopsSessionExpired(msg);
+        });
+        return origSend.apply(xhr, arguments);
+    };
+})();

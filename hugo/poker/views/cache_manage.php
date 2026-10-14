@@ -1,6 +1,6 @@
 <div class="container app-page" id="main">
   <div class="card card-sops">
-    <div class="card-header d-flex justify-between align-items-center flex-wrap">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
       <h1 class="h5 mb-0 page-title"><i class="bi bi-lightning-charge mr-2" aria-hidden="true"></i>缓存管理</h1>
       <a class="btn btn-sm btn-outline-secondary" href="config_list.php"><i class="bi bi-arrow-left mr-1" aria-hidden="true"></i>返回配置管理</a>
     </div>

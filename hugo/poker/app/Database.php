@@ -434,6 +434,38 @@ class Database
         return $rows[0] ?? null;
     }
 
+    /**
+     * 逐行游标读取（generator）：大表导出/流式输出用，避免 fetchAll 把整表驻留内存。
+     * PG 走 PDOStatement，SQLite 走 SQLite3Result，均按行 fetch，结果集不落 PHP 数组。
+     */
+    public static function each($sql, array $params = [])
+    {
+        if (self::isPg()) {
+            $sql = self::translatePg($sql);
+            $stmt = self::connection()->prepare($sql);
+            foreach ($params as $k => $v) $stmt->bindValue($k, $v);
+            $stmt->execute();
+            while (($row = $stmt->fetch(\PDO::FETCH_ASSOC)) !== false) {
+                yield $row;
+            }
+            return;
+        }
+        $statement = self::connection()->prepare($sql);
+        if ($statement === false) {
+            return;
+        }
+        foreach ($params as $name => $value) {
+            $statement->bindValue($name, $value);
+        }
+        $result = $statement->execute();
+        if ($result === false) {
+            return;
+        }
+        while (($row = $result->fetchArray(SQLITE3_ASSOC)) !== false) {
+            yield $row;
+        }
+    }
+
     public static function execute($sql, array $params = [])
     {
         if (self::isPg()) {

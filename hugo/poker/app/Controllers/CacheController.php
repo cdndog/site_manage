@@ -16,8 +16,7 @@ class CacheController
         try {
             Security::requireApiToken(true);
             Security::ensureUidCookie();
-            if (!Security::authValid() && !Security::isGitServerIp()) {
-                AuthController::handle();
+            if (!Security::requireSession()) {
                 return;
             }
             Security::requirePermission('config.manage');

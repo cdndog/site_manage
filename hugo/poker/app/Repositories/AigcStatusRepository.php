@@ -81,4 +81,31 @@ class AigcStatusRepository
         self::ensureTable();
         return Database::fetchAll('SELECT * FROM "' . self::TABLE . '" ORDER BY "publishAt" DESC');
     }
+
+    /**
+     * 流式重写 seodata/aigc_status.json 缓存：逐行游标读取 + 分段写文件，
+     * 整表不驻留内存（旧行为 fetchAll + 一次性 json_encode，行数大时撑爆 memory_limit）。
+     */
+    public static function writeCacheFile(string $file): void
+    {
+        self::ensureTable();
+        $tmp = $file . '.tmp';
+        $fp = @fopen($tmp, 'wb');
+        if ($fp === false) {
+            throw new \RuntimeException('无法写入缓存临时文件: ' . $tmp);
+        }
+        try {
+            fwrite($fp, '[');
+            $first = true;
+            foreach (Database::each('SELECT * FROM "' . self::TABLE . '" ORDER BY "publishAt" DESC') as $row) {
+                fwrite($fp, ($first ? '' : ',') . json_encode($row, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                $first = false;
+                unset($row);
+            }
+            fwrite($fp, ']');
+        } finally {
+            fclose($fp);
+        }
+        @rename($tmp, $file);
+    }
 }

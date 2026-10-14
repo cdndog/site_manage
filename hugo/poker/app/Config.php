@@ -41,7 +41,35 @@ class Config
             'pubdir' => '发布目录：关键词发布目录下拉选项',
             'themetype' => '模板类型：站点模板类型下拉选项',
             'sitetype' => '站点归类：站点归类下拉选项（traffic/cta/purecta）',
+            'display_timezone' => '显示时区：各页面/报表时间显示所用时区（IANA 标识，默认 Asia/Shanghai）',
         ];
+    }
+
+    /** 显示时区默认值：北京时间（UTC+8） */
+    const DISPLAY_TIMEZONE_DEFAULT = 'Asia/Shanghai';
+
+    /** 时区是否为合法 IANA 标识 */
+    public static function isValidTimezone($tz): bool
+    {
+        if (!is_string($tz) || $tz === '') {
+            return false;
+        }
+        try {
+            new \DateTimeZone($tz);
+            return true;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * 显示时区（存储始终 UTC，显示按此换算）：app_configs.display_timezone，
+     * 非法/缺失一律回落北京时间，供 layout_head 注入 window.sopsTimeZone。
+     */
+    public static function displayTimezone(): string
+    {
+        $tz = self::get('display_timezone', self::DISPLAY_TIMEZONE_DEFAULT);
+        return self::isValidTimezone($tz) ? (string)$tz : self::DISPLAY_TIMEZONE_DEFAULT;
     }
 
     private static function dbDictionary()
@@ -61,6 +89,9 @@ class Config
         foreach ($rows as $row) {
             $value = json_decode((string)$row['config_value'], true);
             if (is_array($value)) {
+                self::$dbDictCache[$row['config_key']] = $value;
+            } elseif (is_string($value) && $value !== '') {
+                // 标量设置项（如 display_timezone）同样生效；字典列表只展示 dictionaryKeys，不受影响
                 self::$dbDictCache[$row['config_key']] = $value;
             }
         }
@@ -237,6 +268,12 @@ class Config
             return array_values($configured);
         }
         return [
+            [
+                'title' => '数据看板',
+                'url' => 'dash.php',
+                'icon' => 'bi-graph-up',
+                'perm' => 'report.view',
+            ],
             [
                 'title' => '站点管理',
                 'url' => 'siteops.php',

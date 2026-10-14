@@ -28,15 +28,33 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
     }
     try {
         if ($q === "all") {
-            $rows = Database::fetchAll(
-                'SELECT "ctx_id", "json" FROM "keywordmonitorlist" ORDER BY "id"'
-            );
+            $sql = 'SELECT "ctx_id", "json" FROM "keywordmonitorlist" ORDER BY "id"';
+            $params = [];
         } else {
-            $rows = Database::fetchAll(
-                'SELECT "ctx_id", "json" FROM "keywordmonitorlist" WHERE "ctx_id" = :q OR "keyword" = :q',
-                ['q' => $q]
-            );
+            $sql = 'SELECT "ctx_id", "json" FROM "keywordmonitorlist" WHERE "ctx_id" = :q OR "keyword" = :q';
+            $params = ['q' => $q];
         }
+
+        // 流式输出：t=all 是全表导出，逐行 decode+encode 写出（峰值内存≈单行）。
+        // '[' 在拿到第一行之后才输出，DB 异常发生时响应体仍干净可回 500。
+        $started = false;
+        foreach (Database::each($sql, $params) as $row) {
+            if ($started) {
+                echo ',';
+            } else {
+                echo '[';
+                $started = true;
+            }
+            $decoded = json_decode((string)$row['json'], true);
+            if (!is_array($decoded)) {
+                $decoded = array();
+            }
+            echo json_encode(array('id' => (string)$row['ctx_id']) + $decoded);
+            unset($row, $decoded);
+        }
+        // 无匹配时返回 200 + []，而非空白 body（调用方恒定拿到数组）
+        header('Content-Type: application/json');
+        echo $started ? ']' : '[]';
     } catch (\Throwable $e) {
         error_log('keywordquery DB error: ' . $e->getMessage());
         header('Content-Type: application/json');
@@ -45,17 +63,4 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
         if (!defined('SOPS_TESTING')) { exit; }
         return;
     }
-
-    $response = array();
-    foreach ($rows as $row) {
-        $decoded = json_decode((string)$row['json'], true);
-        if (!is_array($decoded)) {
-            $decoded = array();
-        }
-        $response[] = array('id' => (string)$row['ctx_id']) + $decoded;
-    }
-
-    // 无匹配时返回 200 + []，而非空白 body（调用方恒定拿到数组）
-    header('Content-Type: application/json');
-    echo json_encode($response);
 }

@@ -11,6 +11,33 @@
 <?php if (isset($message)): ?>
       <div class="alert <?php echo !empty($error) ? 'alert-danger' : 'alert-success'; ?> py-2 small"><?php echo e($message); ?></div>
 <?php endif; ?>
+      <div class="card card-sops mb-3" id="displayTzCard">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
+          <h2 class="h6 mb-0"><i class="bi bi-globe mr-1" aria-hidden="true"></i>显示时区</h2>
+          <span class="small text-muted">当前 <?php
+            try {
+                echo e((new DateTimeImmutable('now', new DateTimeZone($display_timezone)))->format('Y-m-d H:i'));
+            } catch (\Throwable $e) {
+                echo e($display_timezone);
+            }
+          ?>（<?php echo e($display_timezone); ?>）</span>
+        </div>
+        <div class="card-body py-2">
+          <form method="post" action="config_list.php" class="form-inline" id="displayTzForm">
+            <input type="hidden" name="action" value="save-display-tz">
+            <input type="hidden" name="csrf_token" value="<?php echo e($csrf_token); ?>">
+            <label for="displayTimezone" class="mr-2 mb-0">时区</label>
+            <select class="selectpicker form-control mr-2" id="displayTimezone" name="display_timezone"
+                    data-live-search="true" data-none-results-text="没有匹配的时区" title="选择时区">
+              <?php foreach ($timezones as $tzOption): ?>
+              <option value="<?php echo e($tzOption); ?>"<?php echo $tzOption === $display_timezone ? ' selected' : ''; ?>><?php echo e($tzOption); ?></option>
+              <?php endforeach; ?>
+            </select>
+            <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check2-circle mr-1" aria-hidden="true"></i>保存时区</button>
+            <span class="small text-muted ml-2 mb-0">默认北京时间（Asia/Shanghai）；保存后所有页面、列表与报表的时间显示立即按此时区换算（存储仍为 UTC）。</span>
+          </form>
+        </div>
+      </div>
       <p class="small text-muted mb-2">业务字典配置存于数据库，部署/密钥类配置保留在 global_config.php；可从配置文件一键导入覆盖。</p>
       <table class="table table-hover table-sm">
         <thead>

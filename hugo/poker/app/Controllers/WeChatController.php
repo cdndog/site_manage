@@ -20,8 +20,7 @@ class WeChatController
         try {
             Security::requireApiToken(true);
             Security::ensureUidCookie();
-            if (!Security::authValid() && !Security::isGitServerIp()) {
-                AuthController::handle();
+            if (!Security::requireSession()) {
                 return;
             }
             Security::requirePermission('article.manage');
@@ -143,6 +142,7 @@ class WeChatController
             $list[] = [
                 'domain' => isset($site['domain']) ? (string) $site['domain'] : '',
                 'languages' => isset($site['languages']) ? (string) $site['languages'] : '',
+                'topnav_menus' => isset($site['topnav_menus']) ? (string) $site['topnav_menus'] : '',
             ];
         }
         self::emitJson(['total' => count($list), 'rows' => $list]);
@@ -315,8 +315,7 @@ class WeChatController
     {
         try {
             Security::ensureUidCookie();
-            if (!Security::authValid()) {
-                AuthController::handle();
+            if (!Security::requireSession()) {
                 return;
             }
             Security::requirePermission('config.manage');

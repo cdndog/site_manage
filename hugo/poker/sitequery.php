@@ -368,15 +368,6 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
         if ($limit == 0 || $total <= $limit) {
             $sql = 'SELECT "ctx_id", "json" FROM "' . $table_name . '"'
                  . ($likeWhere !== '' ? ' WHERE (' . $likeWhere . ') AND ' : ' WHERE ') . $doneCond;
-            $rows = \App\Database::fetchAll($sql, $likeParams);
-
-            $output = [];
-            foreach ($rows as $row) {
-                $siteData = json_decode((string)$row['json'], true);
-                if (!is_array($siteData)) continue;
-                $output[] = array('id' => $row['ctx_id']) + $siteData;
-            }
-            $response = $output;
         }
         // LIMITED BRANCH: Return UP TO $limit "done" entries, prioritize domains with smallest count in sitetopic
         else {
@@ -386,16 +377,20 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
                  . ' WHERE ' . $aliasWhere . ' AND ' . $doneCond
                  . ' ORDER BY COALESCE(c."cnt", 0) ASC, RANDOM()'
                  . ' LIMIT ' . (int)$limit;
-            $rows = \App\Database::fetchAll($sql, $likeParams);
-
-            $output = [];
-            foreach ($rows as $row) {
-                $siteData = json_decode((string)$row['json'], true);
-                if (!is_array($siteData)) continue;
-                $output[] = array('id' => $row['ctx_id']) + $siteData;
-            }
-            $response = $output;
         }
+
+        // 流式输出：limit=0 是全表导出（json 列可能很大），逐行 decode+encode 写出，
+        // 峰值内存≈单行；无匹配时仍返回 200 + []
+        header('Content-Type: application/json');
+        $started = false;
+        foreach (\App\Database::each($sql, $likeParams) as $row) {
+            $siteData = json_decode((string)$row['json'], true);
+            if (!is_array($siteData)) continue;
+            echo ($started ? ',' : '[') . json_encode(array('id' => $row['ctx_id']) + $siteData);
+            $started = true;
+            unset($row, $siteData);
+        }
+        echo $started ? ']' : '[]';
     } catch (\Throwable $e) {
         error_log('sitequery DB error: ' . $e->getMessage());
         http_response_code(500);
@@ -404,9 +399,5 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
         if (!defined('SOPS_TESTING')) { exit; }
         return;
     }
-
-    // Output JSON response（格式与原逻辑一致）；无匹配时返回 200 + []，而非空白 body
-    header('Content-Type: application/json');
-    echo json_encode($response);
 }
 ?>

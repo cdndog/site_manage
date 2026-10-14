@@ -9,19 +9,23 @@ class PublishController
 {
     public static function dispatchList()
     {
-        Security::requireApiToken(true);
-        Security::requirePermission('article.view');
-        $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-        if ($method === 'POST' && isset($_POST['action'])) {
-            if ($_POST['action'] === 'delete') { self::handleDelete(); return; }
-            if ($_POST['action'] === 'edit') { self::handleEdit(); return; }
-            if ($_POST['action'] === 'import') { self::handleImport(); return; }
+        try {
+            Security::requireApiToken(true);
+            Security::requirePermission('article.view');
+            $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+            if ($method === 'POST' && isset($_POST['action'])) {
+                if ($_POST['action'] === 'delete') { self::handleDelete(); return; }
+                if ($_POST['action'] === 'edit') { self::handleEdit(); return; }
+                if ($_POST['action'] === 'import') { self::handleImport(); return; }
+            }
+            $data = self::listData();
+            if ($data === null) {
+                return;
+            }
+            self::shell('发布列表', 'publish_list', $data);
+        } catch (\Throwable $e) {
+            renderErrorPage($e);
         }
-        $data = self::listData();
-        if ($data === null) {
-            return;
-        }
-        self::shell('发布列表', 'publish_list', $data);
     }
 
     private static function handleDelete()
@@ -44,12 +48,9 @@ class PublishController
         \App\Database::execute('DELETE FROM "aigc_status" WHERE "ctx_id"=:c', [':c'=>$ctxId]);
         $jsonFile = \App\Config::dataDir() . '/seodata/json/' . $ctxId . '.json';
         if (is_file($jsonFile)) @unlink($jsonFile);
-        // 刷新缓存
+        // 刷新缓存（流式写文件，整表不驻留内存）
         try {
-            $rows = \App\Database::fetchAll('SELECT * FROM "aigc_status" ORDER BY "publishAt" DESC');
-            $f = \App\Config::dataDir() . '/seodata/aigc_status.json';
-            file_put_contents($f.'.tmp', json_encode($rows, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
-            @rename($f.'.tmp', $f);
+            \App\Repositories\AigcStatusRepository::writeCacheFile(\App\Config::dataDir() . '/seodata/aigc_status.json');
         } catch (\Throwable $e) {}
         self::emitJson(['total'=>1,'rows'=>[['ok'=>true,'message'=>'deleted']]]);
     }
@@ -83,7 +84,20 @@ class PublishController
             if (is_array($j) && isset($j[0]) && is_array($j[0])) $j=$j[0];
             if (is_array($j)) {
                 if (isset($j['topic'])) $j['topic']=$keyword;
-                if (isset($j['title']['text'][0])) $j['title']['text'][0]=$keyword;
+                // title 回写保持原格式：text 为字符串时原地改首字符会把 "casino-guide" 变 "Xasino-guide"
+                if (isset($j['title'])) {
+                    if (is_array($j['title']) && array_key_exists('text', $j['title'])) {
+                        if (is_string($j['title']['text'])) {
+                            $j['title']['text'] = $keyword;
+                        } elseif (is_array($j['title']['text'])) {
+                            $j['title']['text'][0] = $keyword;
+                        } else {
+                            $j['title']['text'] = $keyword;
+                        }
+                    } elseif (is_string($j['title'])) {
+                        $j['title'] = $keyword;
+                    }
+                }
                 $j['lang']=$lang;
                 if (isset($j['pubdomain'])) $j['pubdomain']=array_values(array_filter(array_map('trim', explode(',', $pubdomain))));
                 file_put_contents($jsonFile, json_encode([$j], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
@@ -181,25 +195,9 @@ class PublishController
         } catch (\Throwable $e) {
             if ($isPg) { $db->rollBack(); } else { $db->exec('ROLLBACK'); }
         }
-        // 刷新缓存（分块写文件，避免内存溢出）
+        // 刷新缓存（流式写文件，整表不驻留内存）
         try {
-            $fp = @fopen($dataDir . '/seodata/aigc_status.json.tmp', 'w');
-            if ($fp !== false) {
-                fwrite($fp, '[');
-                $offset = 0; $chunkSize = 5000; $first = true;
-                do {
-                    $rows = \App\Database::fetchAll('SELECT * FROM "aigc_status" ORDER BY "publishAt" DESC LIMIT ' . $chunkSize . ' OFFSET ' . $offset);
-                    foreach ($rows as $row) {
-                        if (!$first) fwrite($fp, ',');
-                        fwrite($fp, json_encode($row, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
-                        $first = false;
-                    }
-                    $offset += $chunkSize;
-                } while (count($rows) === $chunkSize);
-                fwrite($fp, ']');
-                fclose($fp);
-                @rename($dataDir . '/seodata/aigc_status.json.tmp', $dataDir . '/seodata/aigc_status.json');
-            }
+            \App\Repositories\AigcStatusRepository::writeCacheFile($dataDir . '/seodata/aigc_status.json');
         } catch (\Throwable $e) {}
         $msg = "导入完成：新增 $imported 条，覆盖更新 $updated 条，JSON 缺失 $missing 条";
         self::emitJson(['total'=>1,'rows'=>[['ok'=>true,'message'=>$msg]]]);
@@ -254,8 +252,7 @@ class PublishController
         header('X-Frame-Options: SAMEORIGIN');
         try {
             Security::ensureUidCookie();
-            if (!Security::authValid() && !Security::isGitServerIp()) {
-                AuthController::handle();
+            if (!Security::requireSession()) {
                 return;
             }
             Security::requirePermission('article.view');

@@ -92,15 +92,6 @@ if ($limit > 0) {
 if ($limit == 0 || $total <= $limit) {
     $sql = 'SELECT "ctx_id", "json" FROM "' . $table_name . '"'
          . ($likeWhere !== '' ? ' WHERE (' . $likeWhere . ') AND ' : ' WHERE ') . $doneCond;
-    $rows = Database::fetchAll($sql, $likeParams);
-
-    $output = [];
-    foreach ($rows as $row) {
-        $siteData = json_decode((string)$row['json'], true);
-        if (!is_array($siteData)) { continue; }
-        $output[] = ['id' => $row['ctx_id']] + $siteData;
-    }
-    $response = $output;
 } else {
     // 原始逻辑：优先话题数少的站点（负载均衡），同数量内随机
     $aliasWhere = $likeWhere !== '' ? preg_replace('/"(\w+)"(::text)? ' . preg_quote($likeOp) . '/', 's."$1"$2 ' . $likeOp, $likeWhere) : ($isPg ? 'TRUE' : '1');
@@ -109,17 +100,18 @@ if ($limit == 0 || $total <= $limit) {
          . ' WHERE ' . $aliasWhere . ' AND ' . $doneCond
          . ' ORDER BY COALESCE(c."cnt", 0) ASC, RANDOM()'
          . ' LIMIT ' . (int)$limit;
-    $rows = Database::fetchAll($sql, $likeParams);
-
-    $output = [];
-    foreach ($rows as $row) {
-        $siteData = json_decode((string)$row['json'], true);
-        if (!is_array($siteData)) { continue; }
-        $output[] = ['id' => $row['ctx_id']] + $siteData;
-    }
-    $response = $output;
 }
 
-if (!empty($response)) {
-    echo json_encode($response);
+// 流式输出：limit=0 时是全表导出（json 列可能很大），逐行 decode+encode 写出，
+// 峰值内存≈单行；无有效行时不输出任何 body（保持原「空数组不输出」行为）。
+$started = false;
+foreach (Database::each($sql, $likeParams) as $row) {
+    $siteData = json_decode((string)$row['json'], true);
+    if (!is_array($siteData)) { continue; }
+    echo ($started ? ',' : '[') . json_encode(['id' => $row['ctx_id']] + $siteData);
+    $started = true;
+    unset($row, $siteData);
+}
+if ($started) {
+    echo ']';
 }

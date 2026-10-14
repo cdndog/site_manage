@@ -145,10 +145,19 @@ location ~ \.php$ {
 - **站点录入**：GET 打开空表单（默认 themetype=poker、sitetype=cta、deploy=cloudflare），`?eid=<ctx_id>` 回填编辑
 - **关键词配置**（`keywordops.php`）：站点下拉来自 siteops 表，支持批量（逗号分隔）、按 keyword upsert、写 `keywordmonitor/{ctx_id}.json` 备份、导出 `keyword_monitor_list.txt`、审计日志
 - **报表查看**（`seo_report.php`）：`reporttype=wordlist/sitelist/relateword` 三视图，读取 `keyword_monitor_list.txt` / `siteops_setting.txt` / `table_relatedword.txt`，bootstrap-table 搜索/排序/分页，sitelist 行内编辑直达 `siteops.php?eid=`
+- **数据看板**（`dash.php`）：4 张 KPI 卡（站点/话题/关键词/文章），卡内上行总数、下行 当日/本周/本月 新增三个数字（本周为滚动近 7 天；总数取主题正文色 `--sops-text`，增量数字取图表色阶首色 `--sops-chart-base`，不再各用一种 bootstrap 彩色），8 个图表（状态、语言、地域、月度创建/发布趋势）+ 话题 TOP 站点、最近发布两张表；ApexCharts 本地渲染（`js/apexcharts.min.js`，不依赖 CDN，无 JS 时回退为进度条），统计由 `DashboardService` 聚合（缺表/查询失败降级为 0），`POST action=stats` 带 CSRF 可刷新（「数据更新于」时间戳按显示时区渲染，默认北京时间——bootstrap 固定 UTC，此前直接 `date()` 会比本地时钟慢 8 小时）；侧边栏入口「数据看板」，权限 `report.view`；**移动端适配**：TOP 站点/最近发布两表包在 `table-responsive` 内表内横向滚动（列宽由 `dash-cell-*` class 控制、≤576px 收窄至 104px，不再把整页撑出横向滚动条），KPI 卡与图表按 `@media (max-width:576px)` 缩字号/高度，bar 图 y 轴长域名标签 `maxWidth` 限宽、类目多时加高，`matchMedia` 断点 + `resize` 防抖 300ms 跨断点重绘
+- **看板配色**：全部图表取单一基准色 `--sops-chart-base`（默认 `#6f6af8`，`.dash-page` 处改一行即可整体换色），`rampColors()` 固定色相/饱和度、亮度逐级**变浅**派生（类目越多步长越小，上限 94%，首色=基准色），无 JS 回退条同色；侧边栏/卡片图标同用 `--sops-sidebar-icon`（hover 变 `--sops-indigo`）
+- **看板文字**：图内文字一律取主题 token，不写死灰色——`chart.foreColor`/图例 = `--sops-text`，坐标轴/合计标签 = `--sops-muted`，网格与轴线 = `--sops-border`，提示框 `theme:'light'`，空态与回退条同色；数值列 `font-variant-numeric: tabular-nums`
+- **指标放图外**：环形图不再往扇区压百分比，`dataLabels` 关闭，数值与占比放图例（`标签 · 数值（占比%）`）、合计放中心孔（`合计 18`）；条形图受 Apex 限制（`dataLabels.offsetX` 对 bar 强制为 0、`position` 仅对纵向生效）数值留在条内，但按 WCAG 对比度自动取白字或主题正文字；单月趋势用 `markers` 显示数据点（折线/面积在单点时画不出来）
+- **移动端导航（侧边栏抽屉）**：≤991.98px 时 `<aside class="sops-sidebar">` 从横向滚动菜单条改为**离屏抽屉**——默认 `transform: translateX(-100%)` 移出视口，顶栏汉堡按钮（原 `.sops-sidebar-toggle`，移动端不再隐藏）切换 `body[data-mobile-nav=open]`，遮罩（`#sopsNavBackdrop`）点击 / Esc / 选中菜单项后收起；抽屉内为竖排菜单 + 手风琴子菜单（父级点击 `preventDefault` 只展开不跳转，桌面保持原 href 行为），激活项 `scrollIntoView` 滚入可视区，触摸目标 ≥40px，开启时锁 body 滚动，`matchMedia` 断点变化（旋转/缩放回桌面）自动复位；aria-label 随开合切换「打开/关闭导航菜单」
+- **显示时区**（系统管理→配置管理）：`config_list.php` 顶部「显示时区」卡片，IANA 下拉（bootstrap-select 可搜索）默认北京时间 `Asia/Shanghai`，`POST action=save-display-tz`（CSRF + `DateTimeZone` 校验，非法拒绝并保持原值）落 `app_configs.display_timezone`（标量 JSON，`Config::dbDictionary()` 会把字符串值并入 `Config::get`），`Config::displayTimezone()` 非法/缺失回落北京时间；`layout_head.php` 注入 `window.sopsTimeZone`，`js/sops-time.js` 用 `toLocaleString(undefined, {timeZone})` 换算（另提供 `sopsSetTimeZone()` 运行时切换，Intl 非法标识降级浏览器本地），侧栏时钟（`header.php`）同口径渲染；**存储始终 UTC**，切换只影响显示
+- **时间口径**：存储一律 UTC（`app/bootstrap.php` 固定 `date_default_timezone_set('UTC')`；`time` 列为 `Y-m-d H:i:s`，`publishAt/createAt` 为 ISO8601 带 `Z`），显示一律按「显示时区」配置换算（默认北京时间，未配置/非法降级浏览器本地时区）——公共 helper `window.sopsFormatTime()`（`js/sops-time.js`，由 `layout_head.php` 提前加载，`js/siteops.js` 不再定义）供 topiclist 日期、publish/article 列表时间、看板最近发布共用；helper 缺失时降级为原值显示（head 内兜底 shim + 各 formatter `typeof` 守卫），绝不因 ReferenceError 把 bootstrap-table 卡在 Loading；纯日期（`YYYY-MM-DD`）无时区语义原样显示；`ctx_id` 前缀为 `time()` epoch（与 `date.timezone` 无关，全部门经测试固化）
+- **大表流式导出**：全表查询接口不再整表驻留内存——`Database::each()`（generator 游标）+ 逐行 `decode/encode` 直接写出，峰值内存≈单行大小（实测 2000 行×30KB json：修复前 128MB 内存耗尽，修复后 2MB）；涉及 `api/topic_query.php`（`t=all` 曾触发 `Allowed memory size ... exhausted`）、`keywordquery.php`、`api/site_query.php`、`sitequery.php`、`aigc_status.php`，以及 `seodata/aigc_status.json` 缓存重写（`AigcStatusRepository::writeCacheFile()`，publish 删除/更新、publish_edit、上传保存均走它）；`'['` 在拿到首行后才输出，DB 异常仍返回干净 500
+- **话题列表批量操作**（`topiclist.php`）：表格勾选列多选，头部「批量编辑」「批量删除」按钮随勾选数启用并显示计数（`onCheck/onUncheck/onCheckAll/onUncheckAll/onLoadSuccess` 驱动）；批量删除 = `POST action=delete-topics&ctx_ids=a,b`（支持数组或逗号分隔，逐条校验存在、最后统一导出一次，不存在的计入 missing 说明）；批量编辑 = `POST action=update-topics` + 白名单字段（keyword/git_name/domain/pubdir/status/lang/geo/lasttask，**空值字段跳过不覆盖**、值内竖线剔除与录入页一致），走 `TopicRepository::upsertByTopic($record, $providedColumns)` 部分更新——只写提交列并按合并结果重算 json，单条失败（唯一键冲突等）计数不中断其余；两接口均要求 `topic.manage` + CSRF；弹窗提供 status/lang/geo/pubdir 字典下拉，全部留空提交会拒绝
 - **提交**：POST 落库（按 domain upsert，保留原 ctx_id）、写 `sitebulkops/{ctx_id}.json` 备份、全量导出 `siteops_setting.txt`、追加审计日志
 - **接口兼容**：`setupNum=ckeditorFormated` 是提交标志；无 cookie 的请求视为 API（`text2database_merge.sh` 等脚本回灌不受 CSRF/登录影响）
 - **CSRF 防护**：浏览器请求强制校验签名 token（表单隐藏域 / 上传用 `X-CSRF-Token` 头）
-- **可选登录**：设置 `APP_AUTH_USER` + `APP_AUTH_PASSWORD` 后启用，签名 cookie 12 小时有效
+- **可选登录**：设置 `APP_AUTH_USER` + `APP_AUTH_PASSWORD` 后启用，签名 cookie 12 小时有效；登录态过期后访问任意页面统一渲染登录页并提示「登录状态已失效，请登录后再操作」（XHR/`format=json` 返回 `401 {"code":401,"message":...}`，前端提示后自动刷新跳登录），登录成功回跳原地址（含查询串）
 - **图片上传**：前端不再持有 imgbb key，统一经 `imgbb_proxy.php` 服务端代理（限 10MB、仅 image/*）
 - **错误处理**：异常统一渲染 500 错误页并写入 PHP error log，不再白屏
 
@@ -161,6 +170,7 @@ location ~ \.php$ {
    `ctx_id|keyword|status|git_name|pubdir|lang|json`
 4. **下游消费者**：`seo_report.php`（报表）、`sitequery.php`（status=done + json 展开）、`topicops.php`（下拉）、`keywordops.php`（站点下拉）等
 5. **备份文件**：`sitebulkops/{ctx_id}.json`（siteops 表 json 列）、`keywordmonitor/{ctx_id}.json`（keywordmonitorlist 表 json 列）
+6. **查询接口输出**：`topic_query/keywordquery/aigc_status` 无匹配时返回 `200 + []`；`sitequery/site_query` 无匹配时不输出 body；以上均为**服务端流式写出**（响应结构、Content-Type、`X-Result-Count` 等头部不变，调用方无需改动）
 
 ## 7. 功能测试
 
@@ -168,9 +178,9 @@ location ~ \.php$ {
 php tests/run_tests.php
 ```
 
-- 结果示例：`PASS: 136  FAIL: 0`
+- 结果示例：`PASS: 873  FAIL: 0`
 - 测试使用独立沙箱（`tests/tmp/` 下的临时数据库与数据目录），不影响生产数据
-- 覆盖：默认表单、入库/更新（upsert 保留 ctx_id）、管道符清洗、HTML 转义、导出 12 列、eid 回填、SQL 注入 payload、空 domain、无效 POST、merge 脚本契约、CSRF 全部分支、登录开关、imgbb 校验与轮询、**imgbb 异常兜底（超限/网络失败/服务器异常均返回 JSON）**、关键词录入（单条/批量/upsert/CSRF/备份/7 列导出）、报表三视图（wordlist/sitelist/relateword 解析与空态）、header/footer 模块、审计日志、错误页
+- 覆盖：默认表单、入库/更新（upsert 保留 ctx_id）、管道符清洗、HTML 转义、导出 12 列、eid 回填、SQL 注入 payload、空 domain、无效 POST、merge 脚本契约、CSRF 全部分支、登录开关、imgbb 校验与轮询、**imgbb 异常兜底（超限/网络失败/服务器异常均返回 JSON）**、关键词录入（单条/批量/upsert/CSRF/备份/7 列导出）、报表三视图（wordlist/sitelist/relateword 解析与空态）、header/footer 模块、审计日志、错误页、**数据看板（入口/权限/统计刷新/图表与图标配色）**、**大表查询接口流式化（topic_query/keywordquery/sitequery/aigc_status 全表导出计数一致、`Database::each` 游标、aigc_status.json 缓存流式重写）**、**时间 helper 加载顺序与降级（head 提前加载、脚本缺失兜底、formatter `typeof` 守卫）**、**话题列表批量操作（勾选列渲染与计数、批量删除/批量编辑计数与边界：空选择/全空字段/不存在 id/管道符清洗/ctx_ids 数组形态）**、**显示时区（配置管理下拉默认北京时间、保存即时生效并注入 `window.sopsTimeZone`、非法时区拒绝、侧栏时钟同口径）**、**ctx_id 时区安全（epoch 前缀 ±1s、uniqid 熵段、全部门不走 `date()` 拼 id）**、**publish_edit 兼容字符串格式 text（保存名称/标题/描述/关键词预填完整值而非首字符 `value="c"`，保存后字符串/数组格式原样保持，article 表与 aigc 索引同口径）**、**数据看板移动端适配（表格表内横向滚动与 class 列宽、小屏 KPI/图表字号高度、bar 图 y 轴限宽、resize 跨断点重绘）**、**移动端侧边栏抽屉（遮罩渲染、离屏抽屉 CSS、汉堡开合、父级只展开不跳转、Esc/遮罩/选中收起、断点复位与 aria 语义）**
 
 ## 8. 升级与回滚
 

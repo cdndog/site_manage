@@ -53,6 +53,7 @@
           xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
           xhr.onreadystatechange = function () {
             if (xhr.readyState !== 4) { return; }
+            if (xhr.status === 401) { return; } // 登录态失效：由 sopsSessionExpired 统一提示并跳转
             executeBtn.disabled = false;
             executeBtn.innerHTML = '<i class="bi bi-cloud-download mr-1" aria-hidden="true"></i>确定导入';
             window.jQuery(importModal).modal('hide');
@@ -96,19 +97,8 @@
     </table>
     <script>
       function articleTimeFormatter(value) {
-        if (!value) { return value; }
-        var s = String(value);
-        if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
-          return s;
-        }
-        var ts = parseInt(s.slice(0, 10), 10);
-        if (!isNaN(ts) && ts > 0) {
-          var d = new Date(ts * 1000);
-          if (!isNaN(d.getTime())) {
-            return d.toLocaleString();
-          }
-        }
-        return value;
+        // 降级：helper 缺失时显示原值，避免抛错中断表格渲染
+        return typeof window.sopsFormatTime === 'function' ? window.sopsFormatTime(value) : (value == null ? '' : String(value));
       }
 
       function articleThumbFormatter(value) {
@@ -146,6 +136,7 @@
         xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
         xhr.onreadystatechange = function () {
           if (xhr.readyState === 4) {
+            if (xhr.status === 401) { return; } // 登录态失效：由 sopsSessionExpired 统一提示并跳转
             if (xhr.status === 200) {
               var resp = null;
               try { resp = JSON.parse(xhr.responseText); } catch (e) {}

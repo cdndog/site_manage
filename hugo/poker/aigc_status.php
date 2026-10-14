@@ -15,19 +15,27 @@ $pubdomain = isset($_GET['pubdomain']) ? strtolower(trim((string)$_GET['pubdomai
 
 $cutoff = gmdate('Y-m-d\TH:i:s\Z', time() - $scope * 86400);
 
+// scope=all 是全表导出：旧行为 fetchAll 整表驻留 + json_encode 一次性编码，
+// 行数大时同样会打爆 memory_limit（与 api/topic_query.php 同类问题）。
+// 改为：COUNT 先行（DB 故障仍可走下方文件回退，此时未输出任何字节），
+// 之后逐行流式写出，峰值内存≈单行。
+$from = ' FROM "aigc_status"';
+$where = '';
+$params = [];
+if (!$scopeAll) {
+    $where = ' WHERE "publishAt" >= :cutoff';
+    $params[':cutoff'] = $cutoff;
+}
+if ($pubdomain !== '') {
+    $where .= ($where === '' ? ' WHERE ' : ' AND ') . ' ("," || lower("pubdomain") || "," LIKE :pd)';
+    $params[':pd'] = '%,' . strtolower($pubdomain) . ',%';
+}
+
+$out = null;
+$count = 0;
 try {
-    $sql = 'SELECT * FROM "aigc_status" WHERE "publishAt" >= :cutoff';
-    $params = [':cutoff' => $cutoff];
-    if ($scopeAll) {
-        $sql = 'SELECT * FROM "aigc_status"';
-        $params = [];
-    }
-    if ($pubdomain !== '') {
-        $sql .= ($scopeAll ? ' WHERE ' : ' AND ') . ' ("," || lower("pubdomain") || "," LIKE :pd)';
-        $params[':pd'] = '%,' . strtolower($pubdomain) . ',%';
-    }
-    $sql .= ' ORDER BY "publishAt" DESC';
-    $out = Database::fetchAll($sql, $params);
+    $countRow = Database::fetchOne('SELECT COUNT(*) AS "n"' . $from . $where, $params);
+    $count = (int)($countRow['n'] ?? 0);
 } catch (\Throwable $e) {
     $file = __DIR__ . '/seodata/aigc_status.json';
     $data = @file_get_contents($file);
@@ -54,8 +62,20 @@ try {
             }
         }
     }
+    $count = count($out);
 }
 
 header('Content-Type: application/json; charset=utf-8');
-header('X-Result-Count: ' . count($out));
-echo json_encode($out);
+header('X-Result-Count: ' . $count);
+if ($out !== null) {
+    echo json_encode($out);
+    if (!defined('SOPS_TESTING')) { exit; }
+    return;
+}
+$started = false;
+foreach (Database::each('SELECT *' . $from . $where . ' ORDER BY "publishAt" DESC', $params) as $row) {
+    echo ($started ? ',' : '[') . json_encode($row);
+    $started = true;
+    unset($row);
+}
+echo $started ? ']' : '[]';

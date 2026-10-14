@@ -447,8 +447,7 @@ class UserController
         header('X-Frame-Options: SAMEORIGIN');
         try {
             Security::ensureUidCookie();
-            if (!Security::authValid()) {
-                AuthController::handle();
+            if (!Security::requireSession()) {
                 return;
             }
             render('layout_head', ['page_title' => $pageTitle]);

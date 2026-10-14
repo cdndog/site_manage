@@ -88,6 +88,7 @@
         xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
         xhr.onreadystatechange = function () {
           if (xhr.readyState === 4) {
+            if (xhr.status === 401) { return; } // 登录态失效：由 sopsSessionExpired 统一提示并跳转
             if (xhr.status === 200) {
               var resp = null;
               try { resp = JSON.parse(xhr.responseText); } catch (e) {}
@@ -236,6 +237,7 @@
     xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
     xhr.onreadystatechange=function(){
       if(xhr.readyState!==4) return;
+      if(xhr.status===401) return; // 登录态失效：由 sopsSessionExpired 统一提示并跳转
       importExec.disabled=false;importExec.innerHTML='<i class="bi bi-cloud-download mr-1"></i>确定导入';
       window.jQuery(importModal).modal('hide');
       var msg='导入失败',isError=true;

@@ -60,10 +60,9 @@ class ArticleService
         return $clean;
     }
 
-    public static function buildJson(array $post)
+    public static function buildJson(array $post, array $base = [])
     {
-        $base = [];
-        if (isset($post['post_json']) && $post['post_json'] !== '') {
+        if ($base === [] && isset($post['post_json']) && $post['post_json'] !== '') {
             $decoded = json_decode((string)$post['post_json'], true);
             if (is_array($decoded)) {
                 $base = $decoded;
@@ -82,53 +81,232 @@ class ArticleService
             ? str_replace('|', '', trim($post['post_url']))
             : str_replace('|', '', isset($post['post_title']) ? trim($post['post_title']) : '');
 
+        // 以原 JSON 为底，只覆盖表单可编辑字段；未在表单里的键保持原样
         $json = $base;
         $json['pubdir'] = isset($post['post_pubdir']) ? trim($post['post_pubdir']) : '';
-        $json['createAt']['text'][0] = (int)$uuidTs;
+        if (self::textFirst($json['createAt'] ?? null) === '') {
+            $json['createAt'] = self::withText($json['createAt'] ?? null, (int)$uuidTs);
+        }
         $json['update_date'] = date('Y-m-d\TH:i:s\Z');
-        $json['title']['text'][] = isset($post['post_title']) ? trim($post['post_title']) : '';
+        $json['title'] = self::withText($json['title'] ?? null, isset($post['post_title']) ? trim($post['post_title']) : '');
         $json['url'] = $url;
         $json['lang'] = isset($post['post_lang']) ? trim($post['post_lang']) : '';
-        $json['static_thumbnail']['text'][] = isset($post['post_static_thumbnail']) ? trim($post['post_static_thumbnail']) : '';
-        $json['iframesrc']['text'] = isset($post['post_iframesrc']) && trim($post['post_iframesrc']) !== ''
+        $json['static_thumbnail'] = self::withText($json['static_thumbnail'] ?? null, isset($post['post_static_thumbnail']) ? trim($post['post_static_thumbnail']) : '');
+        $json['iframesrc'] = self::withTextValues($json['iframesrc'] ?? null, isset($post['post_iframesrc']) && trim($post['post_iframesrc']) !== ''
             ? array_values(array_filter(array_map('trim', explode(',', (string)$post['post_iframesrc'])), function ($item) {
                 return $item !== '';
             }))
-            : [];
+            : []);
         $json['series'] = isset($post['post_series']) ? trim($post['post_series']) : '';
-        $json['tags']['text'] = isset($post['post_tag']) && trim($post['post_tag']) !== ''
+        $json['tags'] = self::withTextValues($json['tags'] ?? null, isset($post['post_tag']) && trim($post['post_tag']) !== ''
             ? array_values(array_filter(array_map('trim', explode(',', (string)$post['post_tag'])), function ($item) {
                 return $item !== '';
             }))
-            : [];
-        $json['keywords']['text'] = isset($post['post_keyword']) && trim($post['post_keyword']) !== ''
+            : []);
+        $json['keywords'] = self::withTextValues($json['keywords'] ?? null, isset($post['post_keyword']) && trim($post['post_keyword']) !== ''
             ? array_values(array_filter(array_map('trim', explode(',', (string)$post['post_keyword'])), function ($item) {
                 return $item !== '';
             }))
-            : [];
-        $json['description']['text'][] = isset($post['post_description']) ? trim($post['post_description']) : '';
-        $json['savename']['text'][] = isset($post['post_savename']) ? trim($post['post_savename']) : '';
-        $json['slug']['text'][] = isset($post['post_savename']) ? trim($post['post_savename']) : '';
-        $json['globalpublish'] = isset($post['post_globalpublish']) && trim($post['post_globalpublish']) !== '' ? trim($post['post_globalpublish']) : 'no';
+            : []);
+        $json['description'] = self::withText($json['description'] ?? null, isset($post['post_description']) ? trim($post['post_description']) : '');
+
+        // 保存名称与 slug 是同一项：字段值同步写入两处
+        $savename = isset($post['post_savename']) ? trim((string)$post['post_savename']) : '';
+        $baseSavename = self::textFirst($base['savename'] ?? null);
+        $baseSlug = self::textFirst($base['slug'] ?? null);
+        $json['savename'] = self::withText($json['savename'] ?? null, $savename);
+        $syncSlug = !isset($base['slug'])
+            || $baseSlug === ''
+            || $baseSlug === $baseSavename
+            || $savename !== $baseSavename;
+        if ($syncSlug && ($savename !== '' || isset($base['slug']))) {
+            $json['slug'] = self::withText($json['slug'] ?? null, $savename);
+        }
+
+        // 发布/翻译开关：表单里没有该字段（JSON 编辑模式已隐藏）时保留原值，提交了才覆盖
+        $json['globalpublish'] = array_key_exists('post_globalpublish', $post)
+            ? (trim((string)$post['post_globalpublish']) !== '' ? trim((string)$post['post_globalpublish']) : 'no')
+            : (isset($base['globalpublish']) && $base['globalpublish'] !== '' ? (string)$base['globalpublish'] : 'no');
         $json['pubdomain'] = isset($post['post_pubdomain']) && is_array($post['post_pubdomain'])
             ? array_values(array_filter($post['post_pubdomain'], function ($item) {
                 return trim((string)$item) !== '';
             }))
             : [];
-        $json['translate_to_langs'] = isset($post['post_translate_to_langs']) && is_array($post['post_translate_to_langs'])
-            ? array_values(array_filter($post['post_translate_to_langs'], function ($item) {
-                return trim((string)$item) !== '';
-            }))
-            : [];
-        $json['content']['html'][] = isset($post['post_ckeditor_contents']) ? (string)$post['post_ckeditor_contents'] : '';
-        $json['upload_site'] = (string)Config::baseKey('siteConfigServerURL', 'https://wptg.wptdata.com');
+        $json['translate_to_langs'] = array_key_exists('post_translate_to_langs', $post)
+            ? (isset($post['post_translate_to_langs']) && is_array($post['post_translate_to_langs'])
+                ? array_values(array_filter($post['post_translate_to_langs'], function ($item) {
+                    return trim((string)$item) !== '';
+                }))
+                : [])
+            : (isset($base['translate_to_langs']) && is_array($base['translate_to_langs']) ? $base['translate_to_langs'] : []);
+        $json['content'] = self::withHtml($json['content'] ?? null, isset($post['post_ckeditor_contents']) ? (string)$post['post_ckeditor_contents'] : '');
+        $json['upload_site'] = trim((string)($base['upload_site'] ?? '')) !== ''
+            ? $base['upload_site']
+            : (string)Config::baseKey('siteConfigServerURL', 'https://wptg.wptdata.com');
         $json['post_uuid'] = $ctxId;
         return $json;
+    }
+
+    /**
+     * 读取 text/html 节点首个值：兼容 {text:[...]}、{text:"..."}（字符串——PHP 字符串下标 [0] 会只取首字符，
+     * 曾导致保存名称只显示首字母 value="c"）、整节点为标量、缺失等形态，绝不取首字符。
+     */
+    public static function textFirst($node)
+    {
+        if (is_array($node)) {
+            $node = $node['text'] ?? null;
+        }
+        if (is_array($node)) {
+            $node = $node[0] ?? null;
+        }
+        if (is_string($node)) {
+            return $node;
+        }
+        if (is_int($node) || is_float($node)) {
+            return (string)$node;
+        }
+        return '';
+    }
+
+    /** 读取 content.html 首个值，形态兼容同 textFirst */
+    public static function htmlFirst($node)
+    {
+        if (is_array($node)) {
+            $node = $node['html'] ?? null;
+        }
+        if (is_array($node)) {
+            $node = $node[0] ?? null;
+        }
+        if (is_string($node)) {
+            return $node;
+        }
+        if (is_int($node) || is_float($node)) {
+            return (string)$node;
+        }
+        return '';
+    }
+
+    /** 读取 text 节点全部值为数组（原为字符串时整体视为一项），供 implode/多值字段使用 */
+    public static function textValues($node): array
+    {
+        if (is_array($node)) {
+            $node = $node['text'] ?? null;
+        }
+        if (is_string($node)) {
+            return $node === '' ? [] : [$node];
+        }
+        if (is_array($node)) {
+            return array_values(array_map(function ($item) {
+                if (is_string($item)) {
+                    return $item;
+                }
+                if (is_int($item) || is_float($item)) {
+                    return (string)$item;
+                }
+                return '';
+            }, $node));
+        }
+        if (is_int($node) || is_float($node)) {
+            return [(string)$node];
+        }
+        return [];
+    }
+
+    /**
+     * 写回 text 节点并保持原有数据格式：
+     * 原 text 为字符串 → 仍写字符串；原为数组/缺失 → 写数组；整节点原为标量 → 仍写标量。
+     */
+    private static function withText($node, $value)
+    {
+        if (is_string($node)) {
+            return (string)$value;
+        }
+        $node = is_array($node) ? $node : [];
+        if (isset($node['text']) && is_string($node['text'])) {
+            $node['text'] = (string)$value;
+        } else {
+            $node['text'] = [$value];
+        }
+        return $node;
+    }
+
+    private static function withTextValues($node, array $values)
+    {
+        $values = array_map('strval', $values);
+        if (is_string($node)) {
+            return implode(',', $values);
+        }
+        $node = is_array($node) ? $node : [];
+        if (isset($node['text']) && is_string($node['text'])) {
+            $node['text'] = implode(',', $values);
+        } else {
+            $node['text'] = $values;
+        }
+        return $node;
+    }
+
+    private static function withHtml($node, $value)
+    {
+        if (is_string($node)) {
+            return (string)$value;
+        }
+        $node = is_array($node) ? $node : [];
+        if (isset($node['html']) && is_string($node['html'])) {
+            $node['html'] = (string)$value;
+        } else {
+            $node['html'] = [$value];
+        }
+        return $node;
+    }
+
+    /**
+     * 读取现有文章 JSON（优先 seodata/json，其次 json/），返回对象级数组或 null。
+     * 文件里的 [{...}] 包裹格式会被解开，与页面 GET 逻辑一致。
+     */
+    public static function loadJsonForEdit($ctxId)
+    {
+        $ctxId = str_replace('|', '', trim((string)$ctxId));
+        if ($ctxId === '') {
+            return null;
+        }
+        $candidates = [
+            Config::dataDir() . '/seodata/json/' . $ctxId . '.json',
+            self::jsonDir() . '/' . $ctxId . '.json',
+        ];
+        foreach ($candidates as $file) {
+            if (!is_file($file)) {
+                continue;
+            }
+            $data = json_decode((string)file_get_contents($file), true);
+            if (is_array($data) && isset($data[0]) && is_array($data[0])) {
+                $data = $data[0];
+            }
+            if (is_array($data)) {
+                return $data;
+            }
+        }
+        return null;
     }
 
     public static function jsonFileName($ctxId)
     {
         return 'json/' . $ctxId . '.json';
+    }
+
+    /**
+     * 日志文件路径解析：绝对路径原样使用，相对路径按项目根（APP_PATH）解析。
+     * 之前一律 `APP_PATH . '/' . ltrim($path,'/')` 会把 /xxx/yyy 拼成 APP_PATH/xxx/yyy，导致绝对路径永远找不到文件。
+     */
+    public static function resolveLogPath($logFile)
+    {
+        $logFile = trim((string)$logFile);
+        if ($logFile === '') {
+            return '';
+        }
+        if ($logFile[0] === '/' || preg_match('#^[A-Za-z]:[\\\\/]#', $logFile)) {
+            return $logFile;
+        }
+        return APP_PATH . '/' . ltrim($logFile, '/');
     }
 
     public static function importFromLogFile($logFile)
@@ -147,6 +325,7 @@ class ArticleService
         }
         $lines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         $records = [];
+        $seen = [];
         foreach ($lines as $line) {
             $line = trim($line);
             if ($line === '') {
@@ -161,6 +340,16 @@ class ArticleService
             $ctxId = trim($parts[0]);
             $lineUrl = trim($parts[1]);
             $third = trim($parts[2]);
+            if ($ctxId === '' || isset($seen[$ctxId])) {
+                $result['skipped']++;
+                $result['rows'][] = [
+                    'ok' => false,
+                    'message' => $ctxId === '' ? '无效行（ctx_id 为空），跳过' : '重复行（同批已出现），跳过',
+                    'ctx_id' => $ctxId,
+                ];
+                continue;
+            }
+            $seen[$ctxId] = true;
             $json = null;
             if ($third !== '' && $third[0] === '{') {
                 $json = json_decode($third, true);
@@ -173,7 +362,7 @@ class ArticleService
                 $file = self::resolveJsonFile($third);
                 if ($file === null) {
                     $result['missing']++;
-                    $result['rows'][] = ['ok' => false, 'missing' => true, 'message' => 'JSON 文件缺失，跳过', 'ctx_id' => $ctxId];
+                    $result['rows'][] = ['ok' => false, 'missing' => true, 'message' => 'JSON 文件缺失，跳过：' . $third, 'ctx_id' => $ctxId];
                     continue;
                 }
                 $json = json_decode((string)file_get_contents($file), true);
@@ -208,8 +397,8 @@ class ArticleService
         // 批量导入
         if (count($records) > 0) {
             $batchResult = \App\Repositories\ArticleRepository::batchImport($records);
-            $result['imported'] = $batchResult['imported'];
-            $result['skipped'] = $batchResult['skipped'];
+            $result['imported'] += $batchResult['imported'];
+            $result['skipped'] += $batchResult['skipped'];
             $result['failed'] += $batchResult['failed'];
             foreach ($records as $record) {
                 if (isset($record['_raw_json']) && is_array($record['_raw_json'])) {
@@ -290,20 +479,20 @@ class ArticleService
         return [
             'ctx_id' => $ctxId,
             'url' => isset($json['url']) ? (string)$json['url'] : '',
-            'title' => isset($json['title']['text'][0]) ? (string)$json['title']['text'][0] : '',
-            'keyword' => isset($json['keywords']['text']) ? implode(',', $json['keywords']['text']) : '',
-            'tags' => isset($json['tags']['text']) ? implode(',', $json['tags']['text']) : '',
-            'description' => isset($json['description']['text'][0]) ? (string)$json['description']['text'][0] : '',
-            'static_thumbnail' => isset($json['static_thumbnail']['text'][0]) ? (string)$json['static_thumbnail']['text'][0] : '',
-            'iframesrc' => isset($json['iframesrc']['text']) ? implode(',', $json['iframesrc']['text']) : '',
+            'title' => self::textFirst($json['title'] ?? null),
+            'keyword' => implode(',', self::textValues($json['keywords'] ?? null)),
+            'tags' => implode(',', self::textValues($json['tags'] ?? null)),
+            'description' => self::textFirst($json['description'] ?? null),
+            'static_thumbnail' => self::textFirst($json['static_thumbnail'] ?? null),
+            'iframesrc' => implode(',', self::textValues($json['iframesrc'] ?? null)),
             'lang' => isset($json['lang']) ? (string)$json['lang'] : '',
             'series' => isset($json['series']) ? (string)$json['series'] : '',
             'pubdir' => isset($json['pubdir']) ? (string)$json['pubdir'] : '',
-            'savename' => isset($json['savename']['text'][0]) ? (string)$json['savename']['text'][0] : '',
+            'savename' => self::textFirst($json['savename'] ?? null),
             'globalpublish' => isset($json['globalpublish']) ? (string)$json['globalpublish'] : 'no',
             'pubdomain' => isset($json['pubdomain']) && is_array($json['pubdomain']) ? implode(',', $json['pubdomain']) : '',
             'translate_to_langs' => isset($json['translate_to_langs']) && is_array($json['translate_to_langs']) ? implode(',', $json['translate_to_langs']) : '',
-            'content' => isset($json['content']['html'][0]) ? (string)$json['content']['html'][0] : '',
+            'content' => self::htmlFirst($json['content'] ?? null),
             'json' => json_encode($json, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             'json_file' => self::jsonFileName($ctxId),
             'update_date' => isset($json['update_date']) ? (string)$json['update_date'] : '',
@@ -318,11 +507,8 @@ class ArticleService
         $output['ctx_id'] = isset($json['post_uuid']) ? (string)$json['post_uuid'] : '';
         // keyword 优先取 topic（发布时由 publish() 写入），导入日志时 topic 为空则回退取 title
         $kw = isset($json['topic']) && trim((string)$json['topic']) !== '' ? trim((string)$json['topic']) : '';
-        if ($kw === '' && isset($json['title']['text'][0])) {
-            $kw = trim((string)$json['title']['text'][0]);
-        }
-        if ($kw === '' && isset($json['title']) && is_string($json['title'])) {
-            $kw = trim($json['title']);
+        if ($kw === '') {
+            $kw = trim(self::textFirst($json['title'] ?? null));
         }
         $output['keyword'] = $kw;
         $output['lang'] = isset($json['lang']) ? (string)$json['lang'] : '';
@@ -337,7 +523,7 @@ class ArticleService
     public static function publish(array $json)
     {
         $messages = [];
-        $json['topic'] = isset($json['title']['text'][0]) ? (string)$json['title']['text'][0] : '';
+        $json['topic'] = self::textFirst($json['title'] ?? null);
         $lang = isset($json['lang']) ? (string)$json['lang'] : '';
         $seoCommonFileName = (string)Config::baseKey('seoCommonFileName', 'seocommon_poker_article_original.json');
         $siteConfigServerURL = (string)Config::baseKey('siteConfigServerURL', 'https://wptg.wptdata.com');
@@ -393,11 +579,7 @@ class ArticleService
                 // 让上传响应先返回，后台再刷缓存
                 fastcgi_finish_request();
             }
-            $rows = \App\Database::fetchAll('SELECT * FROM "aigc_status" ORDER BY "publishAt" DESC');
-            $file = \App\Config::dataDir() . '/seodata/aigc_status.json';
-            $tmp = $file . '.tmp';
-            file_put_contents($tmp, json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-            @rename($tmp, $file);
+            \App\Repositories\AigcStatusRepository::writeCacheFile(\App\Config::dataDir() . '/seodata/aigc_status.json');
         } catch (\Throwable $e) {
             error_log('[saveSeoData] refresh cache failed: ' . $e->getMessage());
         }

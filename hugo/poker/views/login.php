@@ -4,10 +4,13 @@
             <h1 class="h5 mb-0 page-title"><i class="bi bi-shield-lock mr-2" aria-hidden="true"></i>Login</h1>
         </div>
         <div class="card-body">
+    <?php if (isset($notice) && $notice !== ''): ?>
+    <div class="alert alert-warning"><i class="bi bi-exclamation-triangle mr-1" aria-hidden="true"></i><?php echo e($notice); ?></div>
+    <?php endif; ?>
     <?php if (isset($error) && $error !== ''): ?>
     <div class="alert alert-danger"><?php echo e($error); ?></div>
     <?php endif; ?>
-    <form action="<?php echo e(isset($_SERVER['PHP_SELF']) ? $_SERVER['PHP_SELF'] : '/siteops.php'); ?>" method="post">
+    <form action="<?php echo e(isset($_SERVER['REQUEST_URI']) && $_SERVER['REQUEST_URI'] !== '' ? $_SERVER['REQUEST_URI'] : (isset($_SERVER['PHP_SELF']) ? $_SERVER['PHP_SELF'] : '/siteops.php')); ?>" method="post">
         <input type="hidden" name="login_action" value="login">
         <div class="form-group">
             <label for="auth_user">User:</label>

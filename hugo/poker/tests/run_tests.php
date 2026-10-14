@@ -200,8 +200,8 @@ $flattenModules = function ($list) use (&$flattenModules) {
 };
 $flatMods = $flattenModules($mods);
 $flatUrls = array_map(function ($m) { return isset($m['url']) ? $m['url'] : ''; }, $flatMods);
-test('headerModules grouped by 6 domains', is_array($mods) && count($mods) === 6 && $mods[0]['title'] === '站点管理' && $mods[1]['title'] === '关键词管理' && $mods[2]['title'] === '话题管理' && $mods[3]['title'] === '文章管理' && $mods[4]['title'] === '发布管理' && $mods[5]['title'] === '系统管理');
-test('headerModules contains all entries', in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true) && in_array('publish_list.php', $flatUrls, true));
+test('headerModules grouped by 7 domains', is_array($mods) && count($mods) === 7 && $mods[0]['title'] === '数据看板' && $mods[0]['url'] === 'dash.php' && $mods[0]['perm'] === 'report.view' && $mods[1]['title'] === '站点管理' && $mods[2]['title'] === '关键词管理' && $mods[3]['title'] === '话题管理' && $mods[4]['title'] === '文章管理' && $mods[5]['title'] === '发布管理' && $mods[6]['title'] === '系统管理');
+test('headerModules contains all entries', in_array('dash.php', $flatUrls, true) && in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true) && in_array('publish_list.php', $flatUrls, true));
 $html = runRequest();
 test('header module nav renders', strpos($html, 'sops-sidebar-link') !== false);
 foreach ($flatUrls as $url) {
@@ -533,6 +533,105 @@ if ($seedAdmin !== null) {
 }
 App\Support\Security::reset();
 
+echo "== 登录态失效 → 统一跳转登录页 ==\n";
+putenv('APP_AUTH_USER=admin');
+putenv('APP_AUTH_PASSWORD=secretpw');
+putenv('APP_AUTH_SECRET=authsecret123');
+putenv('APP_API_CSRF_TOKENS=');
+App\Config::reset();
+App\Support\Security::reset();
+$expiredAuth = time() - 60;
+$expiredAuthMac = substr(hash_hmac('sha256', 'auth|admin|' . $expiredAuth, 'authsecret123'), 0, 32);
+$expiredSession = ['siteops_uid' => 'expireuser', 'siteops_auth' => 'admin|' . $expiredAuth . '|' . $expiredAuthMac];
+$expiredEntries = [
+    '/publish_list.php', '/publish_edit.php', '/article_list.php', '/article_new.php',
+    '/topiclist.php', '/topictable.php', '/topicops.php', '/siteops.php', '/keywordops.php',
+    '/users.php', '/user_edit.php', '/roles.php', '/role_edit.php', '/config_list.php',
+    '/config_edit.php', '/cache_manage.php', '/seo_report.php', '/wechat_cookie.php',
+];
+foreach ($expiredEntries as $expiredEntry) {
+    $html = runRequest([], [], 'GET', $expiredSession, $expiredEntry);
+    test(
+        'expired session renders login page: ' . $expiredEntry,
+        strpos($html, 'name="login_action"') !== false
+            && strpos($html, 'forbidden') === false
+            && strpos($html, 'Internal Server Error') === false,
+        substr($html, 0, 150)
+    );
+}
+$html = runRequest([], [], 'GET', $expiredSession, '/publish_list.php');
+test('expired session login page shows notice', strpos($html, '登录状态已失效，请登录后再操作') !== false, substr($html, 0, 200));
+$_SERVER['REQUEST_URI'] = '/publish_list.php?search=poker';
+$html = runRequest([], [], 'GET', $expiredSession, '/publish_list.php');
+test('login form posts back to original url', strpos($html, 'action="/publish_list.php?search=poker"') !== false, substr($html, 0, 200));
+$html = runRequest([], ['login_action' => 'login', 'auth_user' => 'admin', 'auth_password' => 'wrong'], 'POST', $expiredSession, '/publish_list.php');
+test('expired session login failure keeps notice', strpos($html, 'invalid credentials') !== false && strpos($html, '登录状态已失效，请登录后再操作') !== false, substr($html, 0, 200));
+$html = runRequest([], ['login_action' => 'login', 'auth_user' => 'admin', 'auth_password' => 'secretpw'], 'POST', ['siteops_uid' => 'expireuser'], '/publish_list.php');
+test('expired session login success redirects to original url', $html === '', var_export($html, true));
+unset($_SERVER['REQUEST_URI']);
+$authExpiry = time() + 3600;
+$authMac = substr(hash_hmac('sha256', 'auth|admin|' . $authExpiry, 'authsecret123'), 0, 32);
+$validSession = ['siteops_uid' => 'expireuser', 'siteops_auth' => 'admin|' . $authExpiry . '|' . $authMac];
+$html = runRequest([], [], 'GET', $validSession, '/publish_list.php');
+test('relogin session grants publish list again', strpos($html, '发布列表') !== false && strpos($html, 'name="login_action"') === false, substr($html, 0, 150));
+$html = runRequest(['format' => 'json'], [], 'GET', $expiredSession, '/publish_list.php');
+$payload = json_decode($html, true);
+test('expired session json endpoint returns 401 payload', is_array($payload) && (int)($payload['code'] ?? 0) === 401 && strpos((string)($payload['message'] ?? ''), '登录') !== false, substr($html, 0, 150));
+$html = runRequest(['format' => 'json'], [], 'GET', $expiredSession, '/topiclist.php');
+$payload = json_decode($html, true);
+test('expired session topic json endpoint returns 401 payload', is_array($payload) && (int)($payload['code'] ?? 0) === 401, substr($html, 0, 150));
+resetRequest();
+$_POST = ['action' => 'delete', 'ctx_id' => 'CTX-EXPIRED'];
+$_COOKIE = $expiredSession;
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_SERVER['PHP_SELF'] = '/publish_list.php';
+$_SERVER['HTTP_ORIGIN'] = 'http://localhost/publish_list.php';
+$_SERVER['HTTP_ACCEPT'] = '*/*';
+ob_start();
+include dirname(__DIR__) . '/publish_list.php';
+$html = ob_get_clean();
+unset($_SERVER['HTTP_ORIGIN'], $_SERVER['HTTP_ACCEPT']);
+$payload = json_decode($html, true);
+test('expired session xhr action returns 401 payload', is_array($payload) && (int)($payload['code'] ?? 0) === 401 && count(db("SELECT * FROM aigc_status WHERE ctx_id = 'CTX-EXPIRED'")) === 0, substr($html, 0, 150));
+putenv('APP_API_CSRF_TOKENS=sessiontoken');
+App\Config::reset();
+App\Support\Security::reset();
+$html = runRequest([], [], 'GET', $expiredSession, '/publish_list.php', [], 'sessiontoken');
+test('api token + stale session cookie keeps 403 contract', strpos($html, 'forbidden') !== false && strpos($html, 'name="login_action"') === false, substr($html, 0, 150));
+putenv('APP_API_CSRF_TOKENS=');
+App\Config::reset();
+App\Support\Security::reset();
+$html = runRequest([], [], 'GET', $validSession, '/publish_list.php');
+test('footer shows logout button after login', strpos($html, 'logout.php?csrf_token=') !== false && strpos($html, '登出') !== false, substr($html, (int)strpos($html, 'sops-topbar-actions'), 300));
+test('footer shows current username', strpos($html, 'bi-person-circle') !== false && strpos($html, '>admin</span>') !== false, substr($html, (int)strpos($html, 'sops-topbar-actions'), 300));
+$topbarAt = (int)strpos($html, '<div class="sops-topbar-actions">');
+$footerSeg = '';
+$fPos = strpos($html, '<footer');
+if ($fPos !== false) {
+    $footerSeg = substr($html, $fPos, strpos($html, '</footer>') - $fPos);
+}
+test('user and logout moved into topbar right side', $topbarAt > 0 && $topbarAt < strpos($html, '<footer') && substr_count($html, 'sops-topbar-actions') === 1, 'topbarAt=' . $topbarAt);
+test('footer keeps only copyright no user or logout', strpos($footerSeg, 'logout.php') === false && strpos($footerSeg, 'bi-person-circle') === false && strpos($footerSeg, '&copy;') !== false, substr($footerSeg, 0, 200));
+$html = runRequest([], [], 'GET', [], '/siteops.php');
+test('footer hides logout when not logged in', strpos($html, 'logout.php') === false, substr($html, -400));
+$logoutCsrf = substr(hash_hmac('sha256', 'csrf|expireuser', 'testcsrfsecret'), 0, 32);
+$html = runRequest(['csrf_token' => $logoutCsrf], [], 'GET', $validSession, '/logout.php');
+test('logout redirects with empty body', $html === '', var_export($html, true));
+$html = runRequest(['csrf_token' => 'badtokenbadtokenbadtokenbadtoken'], [], 'GET', $validSession, '/logout.php');
+test('logout bad csrf rejected', strpos($html, 'CSRF token invalid') !== false, substr($html, 0, 150));
+$themeCss = (string)file_get_contents($root . '/css/theme.css');
+test('sidebar foot and footer share height token', strpos($themeCss, '--sops-foot-h') !== false && substr_count($themeCss, 'var(--sops-foot-h)') >= 2, 'count=' . substr_count($themeCss, 'var(--sops-foot-h)'));
+test('active pagination page matches outline-primary hover', strpos($themeCss, '.bootstrap-table .pagination .page-item.active .page-link { background: var(--sops-indigo); border-color: var(--sops-indigo); color: #fff; }') !== false && strpos($themeCss, '.btn-outline-primary:hover { background-color: var(--sops-indigo); border-color: var(--sops-indigo); color: #fff;') !== false, substr($themeCss, (int)strpos($themeCss, '.page-item.active'), 160));
+putenv('APP_AUTH_USER');
+putenv('APP_AUTH_PASSWORD');
+putenv('APP_AUTH_SECRET');
+$sessionAdmin = App\Repositories\UserRepository::findByUsername('admin');
+if ($sessionAdmin !== null) {
+    App\Repositories\UserRepository::delete((int)$sessionAdmin['id']);
+}
+App\Config::reset();
+App\Support\Security::reset();
+
 echo "== imgbb proxy ==\n";
 $html = runRequest([], [], 'GET', [], '/imgbb_proxy.php');
 test('imgbb GET rejected 405', strpos($html, 'method not allowed') !== false);
@@ -749,6 +848,13 @@ test('topic GET csrf hidden', strpos($html, 'name="csrf_token"') !== false);
 test('topic GET lists site gitnames/domains', strpos($html, '>testpoker</option>') !== false && strpos($html, '>testpoker.com</option>') !== false);
 test('topic GET unified header/footer', strpos($html, 'sops-sidebar') !== false && strpos($html, 'footer-sops') !== false);
 test('topic GET default bulk checked', strpos($html, 'id="post_bulkkeyword" name="post_bulkkeyword" checked') !== false);
+test('topic GET emits site menu script', strpos($html, 'js/sops-site-menus.js') !== false && strpos($html, 'sopsAttachSiteMenus({') !== false && strpos($html, "triggerId: 'post_domain'") !== false && strpos($html, "targetId: 'post_pubdir'") !== false, substr($html, -800));
+test('topic GET pubdir/domain carry data-id', strpos($html, 'data-id="post_pubdir"') !== false && strpos($html, 'data-id="post_domain"') !== false, '');
+$json = runRequest([], ['action' => 'site_list', 'csrf_token' => 'x'], 'POST', [], '/topicops.php');
+$siteRows = json_decode($json, true);
+test('topicops site_list returns topnav_menus', is_array($siteRows) && isset($siteRows['rows'][0]) && array_key_exists('topnav_menus', $siteRows['rows'][0]), substr((string)$json, 0, 200));
+$nodeCheck = trim((string)shell_exec('command -v node >/dev/null 2>&1 && node --check ' . escapeshellarg(dirname(__DIR__) . '/js/sops-site-menus.js') . ' 2>&1'));
+test('sops-site-menus.js syntax valid', $nodeCheck === '' || strpos($nodeCheck, 'Error') === false, $nodeCheck);
 
 echo "== topicops: POST single ==\n";
 $html = runRequest([], [
@@ -834,6 +940,11 @@ if (count($trows) === 1) {
 }
 test('topic edit unknown eid falls back to new form', strpos(runRequest([], [], 'GET', ['eid' => 'nope-missing'], '/topicops.php'), '话题录入') !== false);
 
+db("UPDATE sitetopic SET pubdir = 'custom-dir-not-in-config' WHERE ctx_id = '" . $tCtxId . "'");
+$html = runRequest(['eid' => $tCtxId], [], 'GET', [], '/topicops.php');
+test('topic GET keeps pubdir config value as option', strpos($html, '<option data-subtext="配置值" value="custom-dir-not-in-config" selected>') !== false, 'pubdir fallback missing');
+test('topic GET pubdir still lists config options', strpos($html, '<option value="article">article</option>') !== false, substr($html, 0, 200));
+
 echo "== topicops: CSRF ==\n";
 $html = runRequest([], [
     'post_uuid' => 'TOPICCSRF1',
@@ -859,7 +970,7 @@ test('article GET uuid generated', preg_match('/id="post_uuid"[^>]*value="([^"]+
 test('article GET ckeditor assets', strpos($html, 'js/ckeditor5/ckeditor5.js') !== false && strpos($html, 'ckeditor5.css') !== false && strpos($html, 'js/slug.js') !== false);
 test('article GET word count and tools', strpos($html, 'id="word-count"') !== false && strpos($html, 'id="list2number"') !== false && strpos($html, 'id="removeBlankLines"') !== false);
 test('article GET pubdomain global + site options', strpos($html, '>global</option>') !== false && strpos($html, '>testpoker.com</option>') !== false);
-test('article GET language/translateto options', strpos($html, '>en</option>') !== false && strpos($html, 'name="post_translate_to_langs[]"') !== false && strpos($html, '🇺🇸 en (English)') !== false);
+test('article GET language/translateto options removed', strpos($html, '>en</option>') !== false && strpos($html, 'name="post_translate_to_langs[]"') === false && strpos($html, 'id="autotranslate"') === false, substr($html, 0, 200));
 test('article GET unified header/footer', strpos($html, 'sops-sidebar') !== false && strpos($html, 'footer-sops') !== false);
 test('article GET image upload flow', strpos($html, 'id="imagesource"') !== false && strpos($html, 'imgbb_proxy.php') !== false && strpos($html, 'X-CSRF-Token') !== false);
 test('article GET preview button', strpos($html, 'id="previewImageTrigger"') !== false && strpos($html, 'btn-outline-primary') !== false && strpos($html, 'bi bi-eye') !== false && strpos($html, 'imagePreviewModal') !== false);
@@ -1255,6 +1366,19 @@ test('article import-log service counts', is_array($svcResult) && $svcResult['im
 $svcRow = App\Repositories\ArticleRepository::byCtxId('NEWIMPORT001');
 test('article import-log service row inserted', is_array($svcRow) && $svcRow['title'] === 'Imported New', json_encode($svcRow, JSON_UNESCAPED_UNICODE));
 test('article import-log service json file written', file_exists($dataDir . '/json/NEWIMPORT001.json'));
+$dupLog = $tmpDir . '/import_dup_test.txt';
+file_put_contents($dupLog, "DUPCTX001|https://example.com/a|{\"post_uuid\":\"DUPCTX001\",\"title\":{\"text\":[\"First\"]}}\nDUPCTX001|https://example.com/b|{\"post_uuid\":\"DUPCTX001\",\"title\":{\"text\":[\"Second\"]}}\nNOJSONCTX01|https://example.com/c|/www/wwwroot/server/pokerjson/NOJSONCTX01.json\n");
+$dupResult = App\Services\ArticleService::importFromLogFile($dupLog);
+test('article import-log duplicate ctx skipped not failed', is_array($dupResult) && $dupResult['imported'] === 1 && $dupResult['skipped'] === 1 && $dupResult['missing'] === 1 && $dupResult['failed'] === 0, json_encode($dupResult, JSON_UNESCAPED_UNICODE));
+$dupMissingRow = null;
+foreach ((is_array($dupResult) ? $dupResult['rows'] : []) as $dupRow) {
+    if (!empty($dupRow['missing'])) {
+        $dupMissingRow = $dupRow;
+        break;
+    }
+}
+test('article import-log missing json reports raw path', is_array($dupMissingRow) && strpos((string)$dupMissingRow['message'], '/www/wwwroot/server/pokerjson/NOJSONCTX01.json') !== false, json_encode($dupMissingRow));
+test('article import-log resolves absolute log path', App\Services\ArticleService::resolveLogPath('/abs/dir/log.txt') === '/abs/dir/log.txt' && App\Services\ArticleService::resolveLogPath('C:\\logs\\a.txt') === 'C:\\logs\\a.txt' && App\Services\ArticleService::resolveLogPath('editor_poker_allpost_list.txt') === APP_PATH . '/editor_poker_allpost_list.txt', App\Services\ArticleService::resolveLogPath('editor_poker_allpost_list.txt'));
 $json = runRequest([], ['action' => 'import-log', 'csrf_token' => 'x'], 'POST', [], '/article_list.php');
 $payload = json_decode($json, true);
 $msgAfterSvc = is_array($payload) && isset($payload['rows'][0]) ? (string)$payload['rows'][0]['message'] : '';
@@ -1870,6 +1994,61 @@ $json = runRequest([], ['action' => 'delete-topic', 'ctx_id' => 'NOPE-MISSING', 
 $payload = json_decode($json, true);
 test('topic list delete unknown ctx rejected', is_array($payload) && isset($payload['rows'][0]['ok']) && $payload['rows'][0]['ok'] === false, substr($json, 0, 120));
 
+echo "== topic list batch select / batch delete / batch edit ==\n";
+$html = runRequest([], [], 'GET', [], '/topiclist.php');
+test('topic list batch buttons and modals rendered', strpos($html, 'topicBatchDelBtn') !== false && strpos($html, 'topicBatchEditBtn') !== false && strpos($html, 'topicBatchDeleteModal') !== false && strpos($html, 'topicBatchEditModal') !== false, substr($html, 0, 200));
+test('topic list checkbox select column rendered', strpos($html, 'checkbox: true') !== false, '');
+test('topic list batch edit form offers fields', strpos($html, 'topicBatchEditForm') !== false && strpos($html, 'name="status"') !== false && strpos($html, 'name="keyword"') !== false && strpos($html, 'name="geo"') !== false && strpos($html, '— 不修改 —') !== false, '');
+test('topic list batch selection wiring present', strpos($html, 'topicBatchUpdateBar') !== false && strpos($html, 'onCheckAll: topicBatchUpdateBar') !== false && strpos($html, 'action=delete-topics') !== false && strpos($html, 'action=update-topics') !== false, '');
+
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('BATCHTOPIC1', 'batchrepo', 'batch1.com', 'batch topic one', 'article', 'enable', 'en', 'US', '20260801093000', '{}', '2026-08-01 09:30:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('BATCHTOPIC2', 'batchrepo', 'batch2.com', 'batch topic two', 'article', 'enable', 'ja', 'JP', '20260802093000', '{}', '2026-08-02 09:30:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('BATCHTOPIC3', 'batchrepo', 'batch3.com', 'batch topic three', 'article', 'enable', 'en', 'US', '20260803093000', '{}', '2026-08-03 09:30:00')");
+
+$json = runRequest([], ['action' => 'update-topics', 'ctx_ids' => 'BATCHTOPIC1,BATCHTOPIC2', 'status' => 'aidone', 'lang' => 'zh', 'csrf_token' => 'x'], 'POST', [], '/topiclist.php');
+$payload = json_decode($json, true);
+test('topic batch update ok with updated count', is_array($payload) && $payload['rows'][0]['ok'] === true && $payload['rows'][0]['updated'] === 2, $json);
+$batchRow1 = App\Repositories\TopicRepository::byCtxId('BATCHTOPIC1');
+$batchRow2 = App\Repositories\TopicRepository::byCtxId('BATCHTOPIC2');
+test('topic batch update persisted to all selected', $batchRow1 !== null && $batchRow1['status'] === 'aidone' && $batchRow1['lang'] === 'zh' && $batchRow2 !== null && $batchRow2['status'] === 'aidone' && $batchRow2['lang'] === 'zh', json_encode([$batchRow1['status'] ?? null, $batchRow2['status'] ?? null]));
+$batchJson = json_decode((string)$batchRow1['json'], true);
+test('topic batch update recomputes json column', is_array($batchJson) && ($batchJson['status'] ?? '') === 'aidone' && ($batchJson['lang'] ?? '') === 'zh', substr((string)$batchRow1['json'], 0, 160));
+
+$json = runRequest([], ['action' => 'update-topics', 'ctx_ids' => 'BATCHTOPIC3', 'keyword' => 'bad|pipe', 'csrf_token' => 'x'], 'POST', [], '/topiclist.php');
+$batchRow3 = App\Repositories\TopicRepository::byCtxId('BATCHTOPIC3');
+test('topic batch update strips pipe from values', $batchRow3 !== null && $batchRow3['keyword'] === 'badpipe', json_encode($batchRow3['keyword'] ?? null));
+
+$json = runRequest([], ['action' => 'update-topics', 'ctx_ids' => 'BATCHTOPIC1', 'csrf_token' => 'x'], 'POST', [], '/topiclist.php');
+$payload = json_decode($json, true);
+test('topic batch update rejects all-empty fields', is_array($payload) && $payload['rows'][0]['ok'] === false && strpos($payload['rows'][0]['message'], '没有可修改的字段') !== false, $json);
+
+$json = runRequest([], ['action' => 'update-topics', 'ctx_ids' => '', 'status' => 'enable', 'csrf_token' => 'x'], 'POST', [], '/topiclist.php');
+$payload = json_decode($json, true);
+test('topic batch update rejects empty selection', is_array($payload) && $payload['rows'][0]['ok'] === false && $payload['rows'][0]['message'] === '未选择话题', $json);
+
+$json = runRequest([], ['action' => 'update-topics', 'ctx_ids' => 'GHOST-TOPIC-1', 'status' => 'enable', 'csrf_token' => 'x'], 'POST', [], '/topiclist.php');
+$payload = json_decode($json, true);
+test('topic batch update counts missing ctx', is_array($payload) && $payload['rows'][0]['missing'] === 1 && $payload['rows'][0]['updated'] === 0 && strpos($payload['rows'][0]['message'], '不存在') !== false, $json);
+
+$json = runRequest([], ['action' => 'delete-topics', 'ctx_ids' => 'BATCHTOPIC1,BATCHTOPIC2,GHOST-TOPIC-2', 'csrf_token' => 'x'], 'POST', [], '/topiclist.php');
+$payload = json_decode($json, true);
+test('topic batch delete ok with deleted and missing counts', is_array($payload) && $payload['rows'][0]['ok'] === true && $payload['rows'][0]['deleted'] === 2 && $payload['rows'][0]['missing'] === 1, $json);
+test('topic batch delete removed selected rows', App\Repositories\TopicRepository::byCtxId('BATCHTOPIC1') === null && App\Repositories\TopicRepository::byCtxId('BATCHTOPIC2') === null && App\Repositories\TopicRepository::byCtxId('BATCHTOPIC3') !== null, '');
+
+$json = runRequest([], ['action' => 'delete-topics', 'ctx_ids' => '', 'csrf_token' => 'x'], 'POST', [], '/topiclist.php');
+$payload = json_decode($json, true);
+test('topic batch delete rejects empty selection', is_array($payload) && $payload['rows'][0]['ok'] === false && $payload['rows'][0]['message'] === '未选择话题', $json);
+
+$json = runRequest([], ['action' => 'delete-topics', 'ctx_ids' => 'GHOST-TOPIC-3,GHOST-TOPIC-4', 'csrf_token' => 'x'], 'POST', [], '/topiclist.php');
+$payload = json_decode($json, true);
+test('topic batch delete all-missing still ok with zero deleted', is_array($payload) && $payload['rows'][0]['ok'] === true && $payload['rows'][0]['deleted'] === 0 && strpos($payload['rows'][0]['message'], '已删除 0 条') !== false, $json);
+
+$json = runRequest([], ['action' => 'update-topics', 'ctx_ids' => array('BATCHTOPIC3'), 'status' => 'enable', 'csrf_token' => 'x'], 'POST', [], '/topiclist.php');
+$payload = json_decode($json, true);
+test('topic batch update accepts ctx_ids array form', is_array($payload) && $payload['rows'][0]['ok'] === true && $payload['rows'][0]['updated'] === 1, $json);
+
+db("DELETE FROM sitetopic WHERE ctx_id = 'BATCHTOPIC3'");
+
 echo "== config management ==\n";
 $cfgRows = db("SELECT config_key FROM app_configs ORDER BY config_key");
 $cfgKeys = array_column($cfgRows, 'config_key');
@@ -1902,6 +2081,28 @@ test('config save non-dictionary key rejected', strpos($html, 'unknown config ke
 $html = runRequest(['key' => 'languages'], [], 'GET', [], '/config_edit.php');
 test('config edit shows updated_by', strpos($html, 'by ') !== false, '');
 
+echo "== display timezone (system settings dropdown) ==\n";
+$html = runRequest([], [], 'GET', [], '/config_list.php');
+test('config list renders timezone dropdown default beijing', strpos($html, 'id="displayTimezone"') !== false && strpos($html, 'save-display-tz') !== false && preg_match('/value="Asia\/Shanghai"\s+selected/', $html) === 1, substr($html, 0, 300));
+test('default display timezone is Asia/Shanghai', App\Config::displayTimezone() === 'Asia/Shanghai', App\Config::displayTimezone());
+test('layout_head injects sopsTimeZone default', strpos($html, 'window.sopsTimeZone = "Asia/Shanghai"') !== false, substr($html, strpos($html, 'sopsTimeZone') ?: 0, 80));
+$cfgTzHeader = (string)file_get_contents($root . '/views/header.php');
+test('sidebar clock renders configured timezone', strpos($cfgTzHeader, 'Config::displayTimezone()') !== false && strpos($cfgTzHeader, 'DateTimeZone') !== false, '');
+$cfgTzJs = (string)file_get_contents($root . '/js/sops-time.js');
+test('sops-time js honors configured timezone with fallback', strpos($cfgTzJs, 'timeZone: tz') !== false && strpos($cfgTzJs, 'window.sopsSetTimeZone') !== false && strpos($cfgTzJs, 'sopsIsValidTimeZone') !== false, '');
+
+$html = runRequest([], ['action' => 'save-display-tz', 'display_timezone' => 'America/New_York', 'csrf_token' => 'x'], 'POST', [], '/config_list.php');
+test('timezone save applies immediately', App\Config::displayTimezone() === 'America/New_York' && preg_match('/value="America\/New_York"\s+selected/', $html) === 1, App\Config::displayTimezone());
+test('timezone save reflected in page injection', strpos($html, 'window.sopsTimeZone = "America/New_York"') !== false && strpos($html, '显示时区已保存') !== false, '');
+
+$html = runRequest([], ['action' => 'save-display-tz', 'display_timezone' => 'Mars/Olympus', 'csrf_token' => 'x'], 'POST', [], '/config_list.php');
+test('invalid timezone rejected keeps current', App\Config::displayTimezone() === 'America/New_York' && strpos($html, '无效的时区') !== false, App\Config::displayTimezone());
+
+runRequest([], ['action' => 'save-display-tz', 'display_timezone' => 'Asia/Shanghai', 'csrf_token' => 'x'], 'POST', [], '/config_list.php');
+test('timezone restored to default for later tests', App\Config::displayTimezone() === 'Asia/Shanghai', App\Config::displayTimezone());
+test('scalar display_timezone merged into config dict', App\Config::get('display_timezone') === 'Asia/Shanghai', '');
+test('timezone card shows current time preview', preg_match('/当前\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}/u', (string)runRequest([], [], 'GET', [], '/config_list.php')) === 1, '');
+
 echo "== config import from file ==\n";
 $cfgAuthExpiry = time() + 3600;
 $cfgAuthMac = substr(hash_hmac('sha256', 'auth|admin|' . $cfgAuthExpiry, App\Config::authSecret()), 0, 32);
@@ -1921,7 +2122,7 @@ foreach ($imported as $row) {
 }
 $fileCfg = include APP_PATH . '/global_config.php';
 test('config import restores file languages', isset($importedMap['languages']) && $importedMap['languages'] === $fileCfg['languages'] && !isset($importedMap['languages']['en-GB']), json_encode($importedMap['languages'] ?? null));
-test('config import syncs all dictionary keys', count($importedMap) === 8 && isset($importedMap['sitetype']) && $importedMap['sitetype'] === $fileCfg['sitetype'], implode(',', array_keys($importedMap)));
+test('config import syncs all dictionary keys', count($importedMap) === 9 && isset($importedMap['sitetype']) && $importedMap['sitetype'] === $fileCfg['sitetype'] && $importedMap['display_timezone'] === 'Asia/Shanghai', implode(',', array_keys($importedMap)));
 App\Config::reset();
 $merged = App\Config::all();
 test('config import takes effect in runtime config', is_array($merged['languages']) && $merged['languages'] === $fileCfg['languages'], '');
@@ -2705,6 +2906,20 @@ $_SERVER['REQUEST_METHOD'] = 'OPTIONS';
 $out = runApiEndpoint(dirname(__DIR__) . '/api/site_ops.php');
 test('site_ops OPTIONS returns empty 204', $out === '', $out);
 
+// --- Database::each 游标（大表流式导出基础，topic_query/keywordquery/sitequery 等依赖） ---
+$rowsA = \App\Database::fetchAll('SELECT "ctx_id", "json" FROM "sitetopic" ORDER BY "id"');
+$rowsB = [];
+foreach (\App\Database::each('SELECT "ctx_id", "json" FROM "sitetopic" ORDER BY "id"') as $rEach) {
+    $rowsB[] = $rEach;
+}
+test('Database::each matches fetchAll rows', count($rowsA) > 0 && count($rowsA) === count($rowsB) && json_encode($rowsA) === json_encode($rowsB), count($rowsA) . ' vs ' . count($rowsB));
+
+$nEach = 0;
+foreach (\App\Database::each('SELECT "ctx_id" FROM "sitetopic" WHERE "ctx_id" = :c', [':c' => 'no-such-each-xyz']) as $rEach) {
+    $nEach++;
+}
+test('Database::each yields nothing on empty result', $nEach === 0, (string)$nEach);
+
 // --- api/topic_query.php ---
 resetRequest();
 $_GET = ['t' => 'all', 'csrf_token' => 'uivision-key-1'];
@@ -2712,12 +2927,24 @@ $_SERVER['REQUEST_METHOD'] = 'GET';
 $out = runApiEndpoint(dirname(__DIR__) . '/api/topic_query.php');
 $json = json_decode($out, true);
 test('topic_query all returns JSON array', is_array($json), $out);
+$dbTopicCount = (int)\App\Database::fetchOne('SELECT COUNT(*) AS "n" FROM "sitetopic"')['n'];
+test('topic_query all streams full table count', is_array($json) && count($json) === $dbTopicCount, (is_array($json) ? count($json) : 'null') . ' vs ' . $dbTopicCount);
+test('topic_query all rows carry id', is_array($json) && count($json) > 0 && isset($json[0]['id']) && $json[0]['id'] !== '', substr($out, 0, 120));
 
 resetRequest();
 $_GET = ['t' => 'no-such-kw-xyz', 'csrf_token' => 'uivision-key-1'];
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $out = runApiEndpoint(dirname(__DIR__) . '/api/topic_query.php');
 test('topic_query unknown keyword returns empty array', trim($out) === '[]', $out);
+
+// aigc_status.php scope=all 同为全表导出：流式输出后总数须与 DB 一致
+resetRequest();
+$_GET = ['scope' => 'all', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/aigc_status.php');
+$items = json_decode($out, true);
+$dbAigcCount = (int)\App\Database::fetchOne('SELECT COUNT(*) AS "n" FROM "aigc_status"')['n'];
+test('aigc_status all streams full table count', is_array($items) && count($items) === $dbAigcCount, (is_array($items) ? count($items) : 'null') . ' vs ' . $dbAigcCount);
 
 resetRequest();
 $_GET = ['csrf_token' => 'uivision-key-1'];
@@ -2878,6 +3105,532 @@ test('uivision_upload pure JSON saves', file_exists($GLOBALS['dataDir'] . '/seod
 @unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST004.txt');
 @unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST005.txt');
 @unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST006.txt');
+
+echo "== publish_edit JSON merge (only form fields) ==\n";
+putenv('APP_API_CSRF_TOKENS=');
+putenv('APP_AUTH_USER');
+putenv('APP_AUTH_PASSWORD');
+putenv('APP_AUTH_SECRET');
+App\Config::reset();
+App\Support\Security::reset();
+
+$mergeId = '1700000000MERGE01';
+$mergeDir = $dataDir . '/seodata/json';
+if (!is_dir($mergeDir)) {
+    @mkdir($mergeDir, 0755, true);
+}
+$mergeFile = $mergeDir . '/' . $mergeId . '.json';
+file_put_contents($mergeFile, json_encode([[
+    'post_uuid' => $mergeId,
+    'url' => 'https://example.com/original.html',
+    'title' => ['text' => ['Old Title'], 'extra' => 'keep-title-extra'],
+    'topic' => 'Old Topic',
+    'savename' => ['text' => ['old-slug']],
+    'slug' => ['text' => ['old-slug']],
+    'content' => ['html' => ['<p>old</p>'], 'oldhtml' => 'keep-me'],
+    'description' => ['text' => ['old description']],
+    'keywords' => ['text' => ['k1']],
+    'tags' => ['text' => ['t1']],
+    'createAt' => ['text' => [1600000000]],
+    'lang' => 'en',
+    'pubdir' => 'article',
+    'series' => 'news',
+    'globalpublish' => 'no',
+    'pubdomain' => ['oldpoker.com'],
+    'translate_to_langs' => ['fr'],
+    'upload_site' => 'https://custom.example.com',
+    'custom_key' => ['nested' => 'untouched'],
+    'aigc' => ['score' => 99],
+]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+$html = runRequest(['eid' => $mergeId], [], 'GET', [], '/publish_edit.php');
+preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm);
+test('publish_edit form prefills savename', isset($sm[1]) && $sm[1] === 'old-slug', isset($sm[1]) ? $sm[1] : 'no match');
+test('publish_edit form prefills title from json', strpos($html, 'value="Old Title"') !== false, substr($html, 0, 200));
+
+$mergePost = [
+    'post_uuid' => $mergeId,
+    'post_url' => 'https://example.com/changed.html',
+    'post_title' => 'New Title',
+    'post_static_thumbnail' => 'https://img.example.com/new.jpg',
+    'post_iframesrc' => 'https://img.example.com/new.gif',
+    'post_tag' => 'poker,new',
+    'post_keyword' => 'new keyword',
+    'post_description' => 'New description',
+    'post_ckeditor_contents' => '<p>new body</p>',
+    'post_lang' => 'zh',
+    'post_series' => 'news',
+    'post_pubdir' => 'article',
+    'post_savename' => 'new-slug',
+    'post_pubdomain' => ['newpoker.com'],
+    'post_globalpublish' => 'yes',
+    'post_translate_to_langs' => ['de'],
+    'csrf_token' => 'x',
+    'setupNum' => 'ckeditorFormated',
+];
+$html = runRequest(['eid' => $mergeId], $mergePost, 'POST', [], '/publish_edit.php');
+test('publish_edit update renders confirm', strpos($html, 'seodata 已同步') !== false, substr($html, 0, 200));
+$raw = json_decode((string)file_get_contents($mergeFile), true);
+$merged = is_array($raw) && isset($raw[0]) && is_array($raw[0]) ? $raw[0] : $raw;
+test('publish_edit keeps wrapped array format', is_array($raw) && isset($raw[0]) && ($merged['post_uuid'] ?? '') === $mergeId, substr((string)file_get_contents($mergeFile), 0, 120));
+test('publish_edit keeps custom keys untouched', ($merged['custom_key']['nested'] ?? '') === 'untouched' && ($merged['aigc']['score'] ?? null) === 99, json_encode($merged['custom_key'] ?? null));
+test('publish_edit keeps content sibling keys', ($merged['content']['oldhtml'] ?? '') === 'keep-me', json_encode($merged['content'] ?? null));
+test('publish_edit keeps title sibling keys', ($merged['title']['extra'] ?? '') === 'keep-title-extra', json_encode($merged['title'] ?? null));
+test('publish_edit keeps createAt original', (int)($merged['createAt']['text'][0] ?? 0) === 1600000000, json_encode($merged['createAt'] ?? null));
+test('publish_edit keeps upload_site original', ($merged['upload_site'] ?? '') === 'https://custom.example.com', (string)($merged['upload_site'] ?? ''));
+test('publish_edit replaces title text without append', ($merged['title']['text'] ?? null) === ['New Title'], json_encode($merged['title']['text'] ?? null));
+test('publish_edit replaces content html without append', ($merged['content']['html'] ?? null) === ['<p>new body</p>'], json_encode($merged['content']['html'] ?? null));
+test('publish_edit writes adjusted savename + slug', ($merged['savename']['text'][0] ?? '') === 'new-slug' && ($merged['slug']['text'][0] ?? '') === 'new-slug', json_encode($merged['slug'] ?? null));
+test('publish_edit writes adjusted lang + pubdomain', ($merged['lang'] ?? '') === 'zh' && ($merged['pubdomain'] ?? null) === ['newpoker.com'] && ($merged['globalpublish'] ?? '') === 'yes', json_encode($merged['pubdomain'] ?? null));
+test('publish_edit bumps update_date', !empty($merged['update_date']), (string)($merged['update_date'] ?? ''));
+
+// slug 与 savename 不一致且字段未改动时，slug 保持原值
+$mergeId2 = '1700000000MERGE02';
+$mergeFile2 = $mergeDir . '/' . $mergeId2 . '.json';
+file_put_contents($mergeFile2, json_encode([[
+    'post_uuid' => $mergeId2,
+    'url' => 'https://example.com/two.html',
+    'title' => ['text' => ['Two']],
+    'savename' => ['text' => ['other-name']],
+    'slug' => ['text' => ['keep-slug']],
+    'createAt' => ['text' => [1700000001]],
+]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+$html = runRequest(['eid' => $mergeId2], [], 'GET', [], '/publish_edit.php');
+preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm2);
+test('publish_edit shows diverged savename value', isset($sm2[1]) && $sm2[1] === 'other-name', isset($sm2[1]) ? $sm2[1] : 'no match');
+$post2 = $mergePost;
+$post2['post_uuid'] = $mergeId2;
+$post2['post_title'] = 'Two Edited';
+$post2['post_savename'] = 'other-name';
+$post2['post_url'] = 'https://example.com/two.html';
+$post2['post_lang'] = 'en';
+$post2['post_globalpublish'] = 'no';
+$post2['post_pubdomain'] = ['oldpoker.com'];
+$post2['post_translate_to_langs'] = ['fr'];
+$post2['post_static_thumbnail'] = '';
+$post2['post_iframesrc'] = '';
+$post2['post_description'] = 'Two description';
+$post2['post_ckeditor_contents'] = '<p>two</p>';
+$post2['post_tag'] = 't1';
+$post2['post_keyword'] = 'k1';
+$post2['post_series'] = 'news';
+$post2['post_pubdir'] = 'article';
+runRequest(['eid' => $mergeId2], $post2, 'POST', [], '/publish_edit.php');
+$raw2 = json_decode((string)file_get_contents($mergeFile2), true);
+$merged2 = is_array($raw2) && isset($raw2[0]) && is_array($raw2[0]) ? $raw2[0] : $raw2;
+test('publish_edit keeps untouched slug value', ($merged2['slug']['text'][0] ?? '') === 'keep-slug', json_encode($merged2['slug'] ?? null));
+test('publish_edit keeps untouched savename value', ($merged2['savename']['text'][0] ?? '') === 'other-name', json_encode($merged2['savename'] ?? null));
+test('publish_edit edits title while slug untouched', ($merged2['title']['text'][0] ?? '') === 'Two Edited' && ($merged2['createAt']['text'][0] ?? 0) == 1700000001, json_encode($merged2['title'] ?? null));
+
+// 改动保存名称时 slug 同步跟随
+$post3 = $post2;
+$post3['post_savename'] = 'renamed-slug';
+runRequest(['eid' => $mergeId2], $post3, 'POST', [], '/publish_edit.php');
+$raw2 = json_decode((string)file_get_contents($mergeFile2), true);
+$merged2 = is_array($raw2) && isset($raw2[0]) && is_array($raw2[0]) ? $raw2[0] : $raw2;
+test('publish_edit syncs slug when savename edited', ($merged2['savename']['text'][0] ?? '') === 'renamed-slug' && ($merged2['slug']['text'][0] ?? '') === 'renamed-slug', json_encode($merged2['slug'] ?? null));
+// 仅剩 savename 没有 slug 的 JSON，回填 slug
+$mergeId3 = '1700000000MERGE03';
+$mergeFile3 = $mergeDir . '/' . $mergeId3 . '.json';
+file_put_contents($mergeFile3, json_encode([['post_uuid' => $mergeId3, 'url' => 'https://example.com/three.html', 'title' => ['text' => ['Three']], 'slug' => ['text' => ['three-slug']]]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+$html = runRequest(['eid' => $mergeId3], [], 'GET', [], '/publish_edit.php');
+preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm3);
+test('publish_edit falls back to slug for savename', isset($sm3[1]) && $sm3[1] === 'three-slug', isset($sm3[1]) ? $sm3[1] : 'no match');
+$post4 = $post2;
+$post4['post_uuid'] = $mergeId3;
+$post4['post_title'] = 'Three';
+$post4['post_savename'] = 'three-slug';
+$post4['post_url'] = 'https://example.com/three.html';
+runRequest(['eid' => $mergeId3], $post4, 'POST', [], '/publish_edit.php');
+$raw3 = json_decode((string)file_get_contents($mergeFile3), true);
+$merged3 = is_array($raw3) && isset($raw3[0]) && is_array($raw3[0]) ? $raw3[0] : $raw3;
+test('publish_edit backfills savename from slug', ($merged3['savename']['text'][0] ?? '') === 'three-slug' && ($merged3['slug']['text'][0] ?? '') === 'three-slug', json_encode($merged3['savename'] ?? null));
+
+@unlink($mergeFile);
+@unlink($mergeFile2);
+@unlink($mergeFile3);
+
+echo "== publish_edit 字符串格式 text（value 不得只剩首字符 / 保存保格式） ==\n";
+$strId = '1700000000STRFMT1';
+$strFile = $mergeDir . '/' . $strId . '.json';
+file_put_contents($strFile, json_encode([[
+    'post_uuid' => $strId,
+    'url' => 'https://example.com/strfmt.html',
+    'title' => ['text' => 'Casino Guide Title'],
+    'topic' => 'Casino Topic',
+    'savename' => ['text' => 'casino-guide'],
+    'slug' => ['text' => 'casino-guide'],
+    'description' => ['text' => 'Full description text'],
+    'static_thumbnail' => ['text' => 'https://img.example.com/a.jpg'],
+    'content' => ['html' => '<p>string body</p>', 'oldhtml' => 'keep-str'],
+    'keywords' => ['text' => 'kw1,kw2'],
+    'tags' => ['text' => 't1'],
+    'iframesrc' => ['text' => 'https://i.example.com/a.gif'],
+    'createAt' => ['text' => [1600000099]],
+    'lang' => 'en',
+    'pubdir' => 'article',
+    'series' => 'news',
+    'globalpublish' => 'no',
+    'pubdomain' => ['strfmt.example.com'],
+    'translate_to_langs' => ['fr'],
+]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+$html = runRequest(['eid' => $strId], [], 'GET', [], '/publish_edit.php');
+preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm4);
+test('string text savename prefills full value not first char', isset($sm4[1]) && $sm4[1] === 'casino-guide', isset($sm4[1]) ? $sm4[1] : 'no match');
+test('string text title prefills full value', strpos($html, 'value="Casino Guide Title"') !== false, '');
+test('string text description prefills full value', strpos($html, 'value="Full description text"') !== false, '');
+test('string text keywords prefills full list', strpos($html, 'value="kw1,kw2"') !== false, '');
+test('string text thumbnail prefills full value', strpos($html, 'value="https://img.example.com/a.jpg"') !== false, '');
+test('string text content prefills full html', strpos($html, '&lt;p&gt;string body&lt;/p&gt;') !== false, '');
+
+$strPost = [
+    'post_uuid' => $strId,
+    'post_url' => 'https://example.com/strfmt.html',
+    'post_title' => 'Casino Guide Title',
+    'post_static_thumbnail' => 'https://img.example.com/a.jpg',
+    'post_iframesrc' => 'https://i.example.com/a.gif',
+    'post_tag' => 't1',
+    'post_keyword' => 'kw1,kw2',
+    'post_description' => 'Full description text',
+    'post_ckeditor_contents' => '<p>string body</p>',
+    'post_lang' => 'en',
+    'post_series' => 'news',
+    'post_pubdir' => 'article',
+    'post_savename' => 'casino-guide',
+    'post_pubdomain' => ['strfmt.example.com'],
+    'post_globalpublish' => 'no',
+    'post_translate_to_langs' => ['fr'],
+    'csrf_token' => 'x',
+    'setupNum' => 'ckeditorFormated',
+];
+runRequest(['eid' => $strId], $strPost, 'POST', [], '/publish_edit.php');
+$rawS = json_decode((string)file_get_contents($strFile), true);
+$mS = is_array($rawS) && isset($rawS[0]) && is_array($rawS[0]) ? $rawS[0] : $rawS;
+test('save keeps savename text string format', ($mS['savename']['text'] ?? null) === 'casino-guide', json_encode($mS['savename'] ?? null));
+test('save keeps slug text string format', ($mS['slug']['text'] ?? null) === 'casino-guide', json_encode($mS['slug'] ?? null));
+test('save keeps title text string format', ($mS['title']['text'] ?? null) === 'Casino Guide Title', json_encode($mS['title']['text'] ?? null));
+test('save keeps description text string format', ($mS['description']['text'] ?? null) === 'Full description text', json_encode($mS['description']['text'] ?? null));
+test('save keeps keywords text string format', ($mS['keywords']['text'] ?? null) === 'kw1,kw2', json_encode($mS['keywords']['text'] ?? null));
+test('save keeps content html string format with siblings', ($mS['content']['html'] ?? null) === '<p>string body</p>' && ($mS['content']['oldhtml'] ?? '') === 'keep-str', json_encode($mS['content'] ?? null));
+$strRow = db("SELECT title, savename, keyword, tags, content FROM article WHERE ctx_id = '$strId'");
+test('article row keeps full string values', count($strRow) === 1 && $strRow[0]['title'] === 'Casino Guide Title' && $strRow[0]['savename'] === 'casino-guide' && $strRow[0]['keyword'] === 'kw1,kw2' && $strRow[0]['tags'] === 't1' && $strRow[0]['content'] === '<p>string body</p>', json_encode($strRow[0] ?? null));
+$strAigc = db("SELECT keyword FROM aigc_status WHERE ctx_id = '$strId'");
+test('aigc index keyword keeps full topic', count($strAigc) === 1 && $strAigc[0]['keyword'] === 'Casino Topic', json_encode($strAigc[0] ?? null));
+
+// 改名后仍保持字符串格式（不得变成 ["value"] 数组）
+$strPost2 = $strPost;
+$strPost2['post_savename'] = 'renamed-guide';
+runRequest(['eid' => $strId], $strPost2, 'POST', [], '/publish_edit.php');
+$rawS = json_decode((string)file_get_contents($strFile), true);
+$mS = is_array($rawS) && isset($rawS[0]) && is_array($rawS[0]) ? $rawS[0] : $rawS;
+test('rename keeps savename and slug string format', ($mS['savename']['text'] ?? null) === 'renamed-guide' && ($mS['slug']['text'] ?? null) === 'renamed-guide', json_encode([$mS['savename'] ?? null, $mS['slug'] ?? null]));
+
+// savename 缺失、slug.text 为字符串时回填完整 slug（而非首字符）
+$strId2 = '1700000000STRFMT2';
+$strFile2 = $mergeDir . '/' . $strId2 . '.json';
+file_put_contents($strFile2, json_encode([[
+    'post_uuid' => $strId2,
+    'url' => 'https://example.com/strfmt2.html',
+    'title' => ['text' => ['Str Two']],
+    'slug' => ['text' => 'slug-string-name'],
+    'createAt' => ['text' => [1600000098]],
+]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+$html = runRequest(['eid' => $strId2], [], 'GET', [], '/publish_edit.php');
+preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm5);
+test('string text slug fallback prefills full value', isset($sm5[1]) && $sm5[1] === 'slug-string-name', isset($sm5[1]) ? $sm5[1] : 'no match');
+
+@unlink($strFile);
+@unlink($strFile2);
+
+echo "== publish_edit json_edit form ==\n";
+putenv('APP_API_CSRF_TOKENS=');
+App\Config::reset();
+App\Support\Security::reset();
+
+$formId = '1700000000FORM001';
+if (!is_dir($mergeDir)) {
+    @mkdir($mergeDir, 0755, true);
+}
+$formFile = $mergeDir . '/' . $formId . '.json';
+file_put_contents($formFile, json_encode([[
+    'post_uuid' => $formId,
+    'url' => 'https://example.com/form.html',
+    'title' => ['text' => ['Form Test']],
+    'pubdir' => 'custom-dir-not-in-config',
+    'savename' => ['text' => ['form-test']],
+    'slug' => ['text' => ['form-test']],
+    'pubdomain' => ['ghost.example.com'],
+    'globalpublish' => 'yes',
+    'translate_to_langs' => ['ja'],
+    'createAt' => ['text' => [1700000002]],
+]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+$html = runRequest(['eid' => $formId], [], 'GET', [], '/publish_edit.php');
+test('publish_edit hides globalpublish switch', strpos($html, 'id="post_globalpublish"') === false && strpos($html, 'id="autopublish"') === false, substr($html, 0, 200));
+test('publish_edit hides autotranslate block', strpos($html, 'id="autotranslate"') === false && strpos($html, 'name="post_translate_to_langs[]"') === false, substr($html, 0, 200));
+test('publish_edit keeps pubdir config value as option', strpos($html, '<option data-subtext="配置值" value="custom-dir-not-in-config" selected>') !== false, 'pubdir fallback missing');
+test('publish_edit keeps unknown pubdomain as option', strpos($html, '<option data-subtext="原配置值" selected>ghost.example.com</option>') !== false, 'pubdomain fallback missing');
+test('publish_edit emits site menu script', strpos($html, 'js/sops-site-menus.js') !== false && strpos($html, 'sopsAttachSiteMenus({') !== false && strpos($html, "triggerId: 'post_pubdomain'") !== false, substr($html, -600));
+test('publish_edit select carries data-id', strpos($html, 'data-id="post_pubdir"') !== false && strpos($html, 'data-id="post_pubdomain"') !== false, '');
+$htmlArticle = runRequest([], [], 'GET', [], '/article_new.php');
+test('article_new hides publish/autotranslate switch', strpos($htmlArticle, 'id="post_globalpublish"') === false && strpos($htmlArticle, 'id="autopublish"') === false && strpos($htmlArticle, 'id="autotranslate"') === false && strpos($htmlArticle, 'name="post_translate_to_langs[]"') === false, substr($htmlArticle, 0, 200));
+test('article_new emits site menu script', strpos($htmlArticle, 'js/sops-site-menus.js') !== false && strpos($htmlArticle, 'sopsAttachSiteMenus({') !== false && strpos($htmlArticle, "triggerId: 'post_pubdomain'") !== false && strpos($htmlArticle, "targetId: 'post_pubdir'") !== false && strpos($htmlArticle, 'data-id="post_pubdir"') !== false, '');
+preg_match('/id="post_pubdir".*?<\/select>/s', $htmlArticle, $mPubdir);
+$pubdirHtml = isset($mPubdir[0]) ? $mPubdir[0] : '';
+test('article_new pubdir keeps config options only', $pubdirHtml !== '' && strpos($pubdirHtml, 'data-subtext="未设置"') === false && strpos($pubdirHtml, 'data-subtext="home"') !== false, substr($pubdirHtml, 0, 200));
+
+$json = runRequest([], ['action' => 'site_list', 'csrf_token' => 'x'], 'POST', [], '/publish_edit.php');
+$siteRows = json_decode($json, true);
+test('publish_edit site_list returns topnav_menus', is_array($siteRows) && isset($siteRows['rows'][0]) && array_key_exists('topnav_menus', $siteRows['rows'][0]), substr($json, 0, 200));
+$json = runRequest([], ['action' => 'site_list', 'csrf_token' => 'x'], 'POST', [], '/article_new.php');
+$siteRows = json_decode($json, true);
+test('article_new site_list returns topnav_menus', is_array($siteRows) && isset($siteRows['rows'][0]) && array_key_exists('topnav_menus', $siteRows['rows'][0]), substr($json, 0, 200));
+
+// 缺省提交（表单已移除发布/翻译开关）时保留原 JSON 的 globalpublish / translate_to_langs
+$formPost = [
+    'post_uuid' => $formId,
+    'post_url' => 'https://example.com/form.html',
+    'post_title' => 'Form Test Edited',
+    'post_static_thumbnail' => '',
+    'post_iframesrc' => '',
+    'post_tag' => 't',
+    'post_keyword' => 'k',
+    'post_description' => 'd',
+    'post_ckeditor_contents' => '<p>d</p>',
+    'post_lang' => 'en',
+    'post_series' => 'news',
+    'post_pubdir' => 'custom-dir-not-in-config',
+    'post_savename' => 'form-test',
+    'post_pubdomain' => ['ghost.example.com'],
+    'csrf_token' => 'x',
+    'setupNum' => 'ckeditorFormated',
+];
+runRequest(['eid' => $formId], $formPost, 'POST', [], '/publish_edit.php');
+$rawForm = json_decode((string)file_get_contents($formFile), true);
+$mergedForm = is_array($rawForm) && isset($rawForm[0]) && is_array($rawForm[0]) ? $rawForm[0] : $rawForm;
+test('publish_edit keeps globalpublish when field removed', ($mergedForm['globalpublish'] ?? '') === 'yes', (string)($mergedForm['globalpublish'] ?? ''));
+test('publish_edit keeps translate_to_langs when field removed', ($mergedForm['translate_to_langs'] ?? null) === ['ja'], json_encode($mergedForm['translate_to_langs'] ?? null));
+test('publish_edit keeps custom pubdir value', ($mergedForm['pubdir'] ?? '') === 'custom-dir-not-in-config', (string)($mergedForm['pubdir'] ?? ''));
+test('publish_edit keeps unknown pubdomain value', ($mergedForm['pubdomain'] ?? null) === ['ghost.example.com'], json_encode($mergedForm['pubdomain'] ?? null));
+
+// 提交了这两个字段时仍然覆盖
+$formPost2 = $formPost;
+$formPost2['post_globalpublish'] = 'no';
+$formPost2['post_translate_to_langs'] = ['de'];
+runRequest(['eid' => $formId], $formPost2, 'POST', [], '/publish_edit.php');
+$rawForm = json_decode((string)file_get_contents($formFile), true);
+$mergedForm = is_array($rawForm) && isset($rawForm[0]) && is_array($rawForm[0]) ? $rawForm[0] : $rawForm;
+test('publish_edit overwrites when fields submitted', ($mergedForm['globalpublish'] ?? '') === 'no' && ($mergedForm['translate_to_langs'] ?? null) === ['de'], json_encode([$mergedForm['globalpublish'] ?? null, $mergedForm['translate_to_langs'] ?? null]));
+
+// pubdir 为空时补「未设置」项，避免被首个配置项覆盖
+$emptyId = '1700000000FORM002';
+$emptyFile = $mergeDir . '/' . $emptyId . '.json';
+file_put_contents($emptyFile, json_encode([['post_uuid' => $emptyId, 'url' => 'https://example.com/e.html', 'title' => ['text' => ['E']], 'pubdir' => '', 'createAt' => ['text' => [1700000003]]]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+$html = runRequest(['eid' => $emptyId], [], 'GET', [], '/publish_edit.php');
+test('publish_edit empty pubdir keeps blank option', strpos($html, '<option data-subtext="未设置" value="" selected>（未设置）</option>') !== false, substr($html, 0, 300));
+
+@unlink($formFile);
+@unlink($emptyFile);
+
+echo "== dash: 数据看板 ==\n";
+$html = runRequest([], [], 'GET', [], '/dash.php');
+test('dash renders page', strpos($html, '>数据看板</h1>') !== false && strpos($html, 'id="dashApp"') !== false, substr($html, 0, 200));
+test('dash loads apexcharts locally', strpos($html, 'js/apexcharts.min.js') !== false && file_exists(dirname(__DIR__) . '/js/apexcharts.min.js'), '');
+test('dash embeds stats json', preg_match('/<script type="application\/json" id="dash-stats">(.*?)<\/script>/s', $html, $dashMatch) === 1 && $dashMatch[1] !== '', 'stats json missing');
+$dashStats = isset($dashMatch[1]) ? json_decode($dashMatch[1], true) : null;
+test('dash stats json valid', is_array($dashStats) && isset($dashStats['summary']) && isset($dashStats['generated_at']), isset($dashMatch[1]) ? substr($dashMatch[1], 0, 160) : '');
+// 「数据更新于」必须按显示时区（默认北京时间）渲染：bootstrap 固定 UTC，直接 date() 会比本地时钟慢 8 小时
+$genAt = (string)($dashStats['generated_at'] ?? '');
+$genDt = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $genAt, new DateTimeZone('Asia/Shanghai'));
+$genNowSh = new DateTimeImmutable('now', new DateTimeZone('Asia/Shanghai'));
+test('dash generated_at matches beijing display clock', $genDt instanceof DateTimeImmutable && abs($genDt->getTimestamp() - $genNowSh->getTimestamp()) <= 120, $genAt . ' vs now=' . $genNowSh->format('Y-m-d H:i:s'));
+$dashSvcSrc = (string)file_get_contents($root . '/app/Services/DashboardService.php');
+test('dash generated_at source uses display timezone', strpos($dashSvcSrc, 'Config::displayTimezone()') !== false && strpos($dashSvcSrc, "'generated_at' => date(") === false, substr($dashSvcSrc, (int)strpos($dashSvcSrc, 'generated_at'), 160));
+test('dash kpi cards rendered', strpos($html, 'data-kpi-value="sites"') !== false && strpos($html, 'data-kpi-value="topics"') !== false && strpos($html, 'data-kpi-value="keywords"') !== false && strpos($html, 'data-kpi-value="articles"') !== false && strpos($html, 'data-kpi-value="new_sites_today"') !== false && strpos($html, 'data-kpi-value="new_topics_week"') !== false && strpos($html, 'data-kpi-value="new_keywords_month"') !== false && strpos($html, 'data-kpi-value="new_articles_month"') !== false && strpos($html, 'data-kpi-value="new_today"') === false && strpos($html, 'data-kpi-value="published"') === false && strpos($html, 'data-kpi-value="rate"') === false && strpos($html, 'data-kpi-sub="rate"') === false && substr_count($html, 'col-6 col-lg-3 mb-3') === 4 && substr_count($html, '<a class="card dash-kpi') === 4, 'kpi: 4 cards each with total row + newcomer row expected');
+test('dash kpi icon before label with unified color', preg_match('/<i class="bi [^"]*dash-kpi-icon" aria-hidden="true"><\/i>\s*<span class="dash-kpi-label/', $html) === 1 && strpos($html, '.dash-page .bi { color: var(--sops-sidebar-icon);') !== false && strpos($html, 'color: var(--sops-indigo);') !== false && strpos($html, 'dash-kpi-icon text-') === false, substr($html, strpos($html, 'dash-kpi-icon') - 120, 320));
+test('dash icons covered by unified color rule', strpos($html, 'container app-page dash-page') !== false && strpos($html, '<div class="card-header"><i class="bi bi-pie-chart mr-1"') !== false, '');
+test('dash btn icon hover matches btn text color', strpos($html, '.dash-page .btn:hover .bi { color: #fff; }') !== false && strpos($html, '.dash-page a:hover .bi,') !== false && strpos($html, '.dash-page .btn:hover .bi { color: var(--sops-indigo); }') === false, substr($html, (int)strpos($html, '.dash-page .btn:hover .bi'), 80));
+test('dash charts use single-hue lightness palette', strpos($html, '--sops-chart-base: #6f6af8') !== false && strpos($html, 'function rampColors') !== false && strpos($html, 'var top = 94') !== false && strpos($html, 'base.l + (span * i)') !== false && strpos($html, 'labelColorOf') !== false && strpos($html, 'colors: ramp,') !== false && strpos($html, 'colors: barRamp,') !== false && strpos($html, 'colors: rampColors(2)') !== false && strpos($html, 'style: { colors: labelColorsOf(barRamp) }') !== false && strpos($html, '#4e79a7') === false && strpos($html, 'var palette') === false && strpos($html, 'background: var(--sops-chart-base)') !== false, substr($html, 0, 200));
+test('dash donut metrics moved outside slices', substr_count($html, 'dataLabels: { enabled: false }') >= 2 && strpos($html, "label: '合计'") !== false && strpos($html, "value: { show: true, color: chartText()") !== false && strpos($html, "return label + ' · ' + value + '（' + pct + '%）';") !== false && strpos($html, "show: true,\n                name: { show: true") !== false && strpos($html, 'function (label, opts)') !== false, 'donut labels still on slices');
+test('dash chart text themed to page tokens', strpos($html, 'function themeColor') !== false && substr_count($html, 'foreColor: chartText()') >= 3 && strpos($html, 'style: { colors: muted, fontSize') !== false && strpos($html, 'style: { colors: chartMuted(), fontSize') !== false && strpos($html, 'grid: { borderColor: chartBorder() }') !== false && strpos($html, "tooltip: { theme: 'light'") !== false && strpos($html, '#2b2f42') === false && strpos($html, '#6c757d') === false && strpos($html, '#adb5bd') === false && strpos($html, 'font-variant-numeric: tabular-nums') !== false, 'hardcoded chart text colors remain');
+$dashCharts = ['chartSiteStatus', 'chartSiteLang', 'chartTopicStatus', 'chartTopicDomain', 'chartKeywordGeo', 'chartKeywordLang', 'chartArticlePublish', 'chartTrend'];
+$dashMissing = [];
+foreach ($dashCharts as $chartId) {
+    if (strpos($html, 'id="' . $chartId . '"') === false) {
+        $dashMissing[] = $chartId;
+    }
+}
+test('dash all chart containers rendered', count($dashMissing) === 0, implode(',', $dashMissing));
+test('dash summary tables rendered', strpos($html, 'id="dashTopSites"') !== false && strpos($html, 'id="dashRecentPublish"') !== false, '');
+test('dash kpi value uses text color deltas keep chart palette', strpos($html, '.dash-kpi .dash-kpi-value { font-size: 1.9rem; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--sops-text); }') !== false && strpos($html, '.dash-kpi .dash-kpi-delta-value { font-size: 1.35rem; font-weight: 600; line-height: 1.05; font-variant-numeric: tabular-nums; color: var(--sops-chart-base); }') !== false && strpos($html, 'class="dash-kpi-value ') === false && !preg_match('/class="dash-kpi-value"[^>]*text-(primary|success|info|warning|danger|secondary)/', $html), 'kpi value color or delta palette wrong');
+test('dash article pubdir chart removed', strpos($html, 'chartArticlePubdir') === false && strpos($html, '文章按发布目录') === false && strpos($html, "drawBar('chartArticlePubdir'") === false, 'pubdir chart still present');
+test('dash publish domain chart removed', strpos($html, 'chartPublishDomain') === false && strpos($html, '发布域名分布') === false && strpos($html, "drawDonut('chartPublishDomain'") === false && !isset($dashStats['publish']['by_domain']), 'publish domain chart/stats still present');
+
+// 移动端适配：表格表内横向滚动 + 小屏字号/高度 + 断点重绘
+test('dash tables scroll inside card not page', substr_count($html, 'table-responsive dash-table-wrap') === 2 && strpos($html, 'dash-table-wrap') !== false && strpos($html, 'style="max-width:160px;"') === false && strpos($html, 'style="max-width:150px;"') === false, 'inline max-width cells or missing wrapper');
+test('dash mobile media query shrinks kpi and charts', strpos($html, '@media (max-width: 576px)') !== false && strpos($html, '.dash-kpi .dash-kpi-value { font-size: 1.35rem; }') !== false && strpos($html, '.dash-chart { min-height: 220px; }') !== false && strpos($html, '.dash-cell-site, .dash-cell-domain, .dash-cell-keyword { max-width: 104px; }') !== false, '');
+test('dash charts adapt mobile breakpoint', strpos($html, "matchMedia('(max-width: 576px)')") !== false && strpos($html, 'function axisFont()') !== false && strpos($html, 'maxWidth: isMobile() ? 96 : 160') !== false && strpos($html, "isMobile() && pairs.length > 6 ? 360 : 300") !== false, '');
+test('dash redraws on viewport resize across breakpoint', strpos($html, "window.addEventListener('resize'") !== false && strpos($html, 'renderAll(readStats()); }, 300)') !== false, '');
+test('dash table cells use classes not inline width', strpos($html, "style: 'max-width:") === false && strpos($html, "align: 'text-truncate dash-cell-keyword'") !== false && strpos($html, "align: 'text-truncate dash-cell-site'") !== false && strpos($html, 'dash-cell-time') !== false, '');
+
+$dashCount = function ($sql) {
+    try {
+        return count(db($sql));
+    } catch (\Throwable $e) {
+        return -1;
+    }
+};
+$dashNewTables = ['sites' => 'siteops', 'topics' => 'sitetopic', 'keywords' => 'keywordmonitorlist', 'articles' => 'article'];
+$dashNewCount = function ($table, $window) {
+    $from = $window === 'week'
+        ? date('Y-m-d H:i:s', time() - 7 * 86400)
+        : ($window === 'month' ? date('Y-m-01 00:00:00') : date('Y-m-d 00:00:00'));
+    try {
+        return count(db("SELECT \"time\" FROM \"" . $table . "\" WHERE \"time\" >= '" . $from . "' AND \"time\" <> ''"));
+    } catch (\Throwable $e) {
+        return -1;
+    }
+};
+if (is_array($dashStats)) {
+    test(
+        'dash summary matches db counts',
+        (int)($dashStats['summary']['sites'] ?? -1) === $dashCount('SELECT "domain" FROM "siteops"')
+            && (int)($dashStats['summary']['topics'] ?? -1) === $dashCount('SELECT "keyword" FROM "sitetopic"')
+            && (int)($dashStats['summary']['keywords'] ?? -1) === $dashCount('SELECT "keyword" FROM "keywordmonitorlist"')
+            && (int)($dashStats['summary']['articles'] ?? -1) === $dashCount('SELECT "ctx_id" FROM "article"'),
+        json_encode($dashStats['summary'] ?? [])
+    );
+    test(
+        'dash dimensions well formed',
+        isset($dashStats['sites']['by_status'], $dashStats['sites']['by_language'], $dashStats['topics']['by_status'], $dashStats['topics']['by_domain'], $dashStats['keywords']['by_geo'], $dashStats['keywords']['by_lang'], $dashStats['articles']['by_pubdir'], $dashStats['articles']['by_pubdomain'], $dashStats['top_sites']),
+        implode(',', array_keys($dashStats))
+    );
+    $dashNewOk = !isset($dashStats['newcomers']['today']) && substr_count($html, '<a class="card dash-kpi') === 4 && substr_count($html, 'class="dash-kpi-deltas"') === 4;
+    $dashNewDetail = [];
+    foreach ($dashNewTables as $dashName => $dashTable) {
+        $dashBox = isset($dashStats['newcomers'][$dashName]) && is_array($dashStats['newcomers'][$dashName]) ? $dashStats['newcomers'][$dashName] : null;
+        foreach (['today', 'week', 'month'] as $dashWin) {
+            $dashExpect = $dashNewCount($dashTable, $dashWin);
+            $dashActual = is_array($dashBox) && isset($dashBox[$dashWin]) ? $dashBox[$dashWin] : null;
+            if (!is_int($dashActual) || $dashActual !== $dashExpect) {
+                $dashNewOk = false;
+                $dashNewDetail[] = $dashName . '.' . $dashWin . '=' . json_encode($dashActual) . ' != ' . $dashExpect;
+            }
+        }
+        if (is_array($dashBox) && (int)($dashBox['today'] ?? -1) > (int)($dashBox['week'] ?? -1)) {
+            $dashNewOk = false;
+            $dashNewDetail[] = $dashName . ' today > week';
+        }
+    }
+    test(
+        'dash newcomers stats split per item',
+        $dashNewOk,
+        implode('; ', $dashNewDetail) ?: json_encode($dashStats['newcomers'] ?? null)
+    );
+    test(
+        'dash trend months aligned',
+        is_array($dashStats['trend'] ?? null)
+            && count($dashStats['trend']['months'] ?? []) === count($dashStats['trend']['created'] ?? [])
+            && count($dashStats['trend']['months'] ?? []) === count($dashStats['trend']['published'] ?? []),
+        json_encode($dashStats['trend'] ?? null)
+    );
+}
+
+$dashNav = null;
+foreach (App\Config::headerModules() as $navModule) {
+    if (isset($navModule['url']) && $navModule['url'] === 'dash.php') {
+        $dashNav = $navModule;
+        break;
+    }
+}
+test('dash registered in header nav', is_array($dashNav) && ($dashNav['title'] ?? '') === '数据看板' && ($dashNav['perm'] ?? '') === 'report.view', json_encode($dashNav));
+
+// 带真实会话的场景：新建只读用户（report.view）与无权限用户
+$dashViewerRole = db("SELECT id FROM roles WHERE name='viewer'");
+$dashViewerId = App\Repositories\UserRepository::create([
+    'username' => 'dashviewer',
+    'password_hash' => password_hash('pass1234', PASSWORD_DEFAULT),
+    'display_name' => 'Dash Viewer',
+    'status' => 'active',
+]);
+App\Repositories\UserRepository::setRoles((int)$dashViewerId, [(int)$dashViewerRole[0]['id']]);
+$dashAuth = App\Support\Security::buildAuthCookie('dashviewer', time() + 3600);
+$dashCookie = ['siteops_uid' => 'dashv1', 'siteops_auth' => $dashAuth];
+$htmlViewer = runRequest([], [], 'GET', $dashCookie, '/dash.php');
+test('dash allowed for viewer role', strpos($htmlViewer, 'id="dashApp"') !== false, substr($htmlViewer, 0, 160));
+
+db("INSERT INTO roles (name, description) VALUES ('dashnone', 'no permission')");
+$dashNoneRole = db("SELECT id FROM roles WHERE name='dashnone'");
+$dashNoneId = App\Repositories\UserRepository::create([
+    'username' => 'dashnone',
+    'password_hash' => password_hash('pass1234', PASSWORD_DEFAULT),
+    'display_name' => 'Dash None',
+    'status' => 'active',
+]);
+App\Repositories\UserRepository::setRoles((int)$dashNoneId, [(int)$dashNoneRole[0]['id']]);
+$dashNoneAuth = App\Support\Security::buildAuthCookie('dashnone', time() + 3600);
+$htmlNoPerm = runRequest([], [], 'GET', ['siteops_uid' => 'dashn1', 'siteops_auth' => $dashNoneAuth], '/dash.php');
+test('dash blocked without report.view', strpos($htmlNoPerm, 'forbidden: insufficient permission') !== false, substr($htmlNoPerm, 0, 160));
+
+$dashResp = runRequest([], ['action' => 'stats', 'csrf_token' => 'x'], 'POST', [], '/dash.php');
+$dashPayload = json_decode($dashResp, true);
+test('dash stats action returns fresh stats', is_array($dashPayload) && ($dashPayload['ok'] ?? false) === true && isset($dashPayload['stats']['summary']), substr($dashResp, 0, 200));
+$dashRespBad = runRequest([], ['action' => 'stats', 'csrf_token' => 'deadbeefdeadbeefdeadbeefdeadbeef'], 'POST', $dashCookie, '/dash.php');
+$dashPayloadBad = json_decode($dashRespBad, true);
+test('dash stats action rejects bad csrf', is_array($dashPayloadBad) && ($dashPayloadBad['ok'] ?? true) === false, substr($dashRespBad, 0, 160));
+
+echo "\n== 时间显示口径：存储 UTC / 显示浏览器时区 ==\n";
+$sopsTimeJsSrc = (string)file_get_contents($root . '/js/sops-time.js');
+$siteopsJsSrc = (string)file_get_contents($root . '/js/siteops.js');
+$layoutHeadSrc = (string)file_get_contents($root . '/views/layout_head.php');
+$pubListSrc = (string)file_get_contents($root . '/views/publish_list.php');
+$topicListSrc = (string)file_get_contents($root . '/views/topic_list.php');
+$articleListSrc = (string)file_get_contents($root . '/views/article_list.php');
+$dashSrc = (string)file_get_contents($root . '/views/dashboard.php');
+$bootstrapSrc = (string)file_get_contents($root . '/app/bootstrap.php');
+test('bootstrap pins storage timezone to utc', strpos($bootstrapSrc, "date_default_timezone_set('UTC')") !== false && date_default_timezone_get() === 'UTC', substr($bootstrapSrc, 0, 200));
+test('shared time helper converts storage utc to browser tz', strpos($sopsTimeJsSrc, 'window.sopsFormatTime') !== false && strpos($sopsTimeJsSrc, "replace(' ', 'T') + 'Z'") !== false && strpos($sopsTimeJsSrc, 'toLocaleString(undefined, opts)') !== false && strpos($sopsTimeJsSrc, 'timeZone: tz') !== false && strpos($sopsTimeJsSrc, '/^\\d{4}-\\d{2}-\\d{2}$/') !== false, substr($sopsTimeJsSrc, 0, 200));
+test('time helper loaded in head before page scripts', strpos($layoutHeadSrc, '<script src="js/sops-time.js">') !== false, substr($layoutHeadSrc, 0, 200));
+test('time helper degrades if script missing (head shim)', strpos($layoutHeadSrc, "typeof window.sopsFormatTime !== 'function'") !== false, '');
+test('time helper degrades in table formatters', substr_count($topicListSrc, "typeof window.sopsFormatTime === 'function'") >= 1 && substr_count($pubListSrc, "typeof window.sopsFormatTime === 'function'") >= 1 && substr_count($articleListSrc, "typeof window.sopsFormatTime === 'function'") >= 1 && substr_count($dashSrc, "typeof window.sopsFormatTime === 'function'") >= 1, '');
+test('siteops.js no longer sole definition of time helper', strpos($siteopsJsSrc, 'window.sopsFormatTime =') === false, '');
+test('publish list no longer strips Z as local time', strpos($pubListSrc, 'sopsFormatTime(value)') !== false && strpos($pubListSrc, "replace('T',' ')") === false && strpos($pubListSrc, "replace('Z','')") === false, '');
+test('topic list uses shared time helper', strpos($topicListSrc, 'sopsFormatTime(value)') !== false, '');
+test('article list uses shared time helper', strpos($articleListSrc, 'sopsFormatTime(value)') !== false, '');
+test('dashboard recent publish time uses shared helper', strpos($dashSrc, 'sopsFormatTime(row.publishAt') !== false, '');
+
+echo "\n== 移动端侧边栏抽屉（汉堡导航） ==\n";
+$html = runRequest([], [], 'GET', [], '/siteops.php');
+test('header renders mobile nav backdrop', strpos($html, 'id="sopsNavBackdrop"') !== false && strpos($html, 'class="sops-nav-backdrop"') !== false, substr($html, (int)strpos($html, 'sops-nav-backdrop'), 160));
+test('topbar toggle present for mobile hamburger', strpos($html, 'id="sidebarToggle"') !== false && strpos($html, 'sops-topbar') !== false, '');
+$themeCssSrc = (string)file_get_contents($root . '/css/theme.css');
+test('sidebar becomes off-canvas drawer on mobile', strpos($themeCssSrc, '@media (max-width: 991.98px)') !== false && strpos($themeCssSrc, 'body[data-mobile-nav="open"] .sops-sidebar') !== false && strpos($themeCssSrc, 'transform: translateX(-100%);') !== false && strpos($themeCssSrc, 'body[data-mobile-nav="open"] .sops-nav-backdrop { display: block; }') !== false && strpos($themeCssSrc, 'body[data-mobile-nav="open"] { overflow: hidden; }') !== false, '');
+test('old horizontal strip menu rules removed', strpos($themeCssSrc, '.sops-sidebar-menu { flex-direction: row; }') === false && strpos($themeCssSrc, '.sops-sidebar-toggle { display: none; }') === false && strpos($themeCssSrc, '.sops-sidebar-brand .sops-sidebar-title { display: none; }') === false, 'legacy mobile strip rules remain');
+test('mobile hamburger button visible not hidden', preg_match('/@media \(max-width: 991\.98px\).*?\.sops-sidebar-toggle \{ display: inline-flex; \}/s', $themeCssSrc) === 1, 'inline-flex toggle inside 991.98 block expected');
+$siteopsJsSrc = (string)file_get_contents($root . '/js/siteops.js');
+test('siteops toggles mobile drawer via body attr', strpos($siteopsJsSrc, "matchMedia('(max-width: 991.98px)')") !== false && strpos($siteopsJsSrc, 'setMobileNav') !== false && strpos($siteopsJsSrc, "document.body.setAttribute('data-mobile-nav'") !== false && strpos($siteopsJsSrc, "document.body.removeAttribute('data-mobile-nav')") !== false, '');
+test('mobile parent link only expands submenu no jump', strpos($siteopsJsSrc, "closest('a.sops-sidebar-link-parent')") !== false && strpos($siteopsJsSrc, 'e.preventDefault();') !== false, '');
+test('drawer closes via backdrop esc and nav link', strpos($siteopsJsSrc, 'backdrop.addEventListener') !== false && strpos($siteopsJsSrc, "e.key === 'Escape'") !== false && strpos($siteopsJsSrc, "closest('.sops-sidebar-nav a')") !== false && strpos($siteopsJsSrc, 'setMobileNav(false)') !== false, '');
+test('drawer scrolls active item and resets on breakpoint', strpos($siteopsJsSrc, 'scrollIntoView') !== false && strpos($siteopsJsSrc, "mobileNavQuery.addEventListener('change'") !== false && strpos($siteopsJsSrc, "'打开导航菜单'") !== false, '');
+
+echo "\n== ctx_id 时区安全：epoch 前缀、不走 date() ==\n";
+$topicSvcSrc = (string)file_get_contents($root . '/app/Services/TopicService.php');
+$ctxDefault = \App\Services\TopicService::defaultForm();
+$ctxId = (string)$ctxDefault['ctx_id'];
+$ctxEpoch = (int)substr($ctxId, 0, 10);
+test('ctx id generated from epoch prefix', ctype_digit(substr($ctxId, 0, 10)) && abs($ctxEpoch - time()) <= 1, $ctxId);
+test('ctx id format uniqid entropy', preg_match('/^[0-9a-f]{21,}$/', substr($ctxId, 10)) === 1 && strlen($ctxId) >= 31, $ctxId);
+test('ctx id generation independent of date.timezone', strpos($topicSvcSrc, "date('") === false && substr_count($topicSvcSrc, 'uniqid(time(), true)') === 3, 'date_count=' . substr_count($topicSvcSrc, "date('") . ' uniqid=' . substr_count($topicSvcSrc, 'uniqid(time(), true)'));
+$ctxFiles = glob($root . '/app/{Services,Repositories,Support}/*.php', GLOB_BRACE);
+$ctxBad = [];
+foreach ($ctxFiles as $ctxFile) {
+    foreach (file($ctxFile, FILE_IGNORE_NEW_LINES) as $ctxLineNo => $ctxLine) {
+        if (strpos($ctxLine, 'ctx_id') !== false && preg_match("/date\\(/", $ctxLine) === 1) {
+            $ctxBad[] = basename($ctxFile) . ':' . ($ctxLineNo + 1);
+        }
+    }
+}
+test('no ctx_id built with date() anywhere', $ctxBad === [], implode(',', $ctxBad));
 
 echo "\n========================================\n";
 echo "PASS: {$GLOBALS['pass']}  FAIL: {$GLOBALS['fail']}\n";

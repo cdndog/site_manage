@@ -37,6 +37,8 @@
   --sops-sidebar-soft: rgba(111, 106, 248, .12);
   --sops-font: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --sops-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* 侧边栏底部与页脚统一高度（两者水平相邻，需等高对齐） */
+  --sops-foot-h: 46px;
 }
 
 html { color-scheme: light; }
@@ -133,6 +135,14 @@ a:hover { color: var(--sops-primary-dark); }
 }
 .sops-sidebar-toggle:hover { background: var(--sops-sidebar-soft); border-color: transparent; color: var(--sops-indigo); }
 .sops-sidebar-toggle i { font-size: 1.05rem; }
+/* 移动端抽屉遮罩（默认隐藏；开合规则在 @media (max-width: 991.98px) 内由 body[data-mobile-nav] 驱动） */
+.sops-nav-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1040;
+  background: rgba(15, 18, 26, .45);
+}
 
 .sops-sidebar-brand {
   display: flex; align-items: center; gap: .6rem;
@@ -252,7 +262,11 @@ a:hover { color: var(--sops-primary-dark); }
 .sops-submenu-link.active::before { border-color: var(--sops-indigo); background-color: var(--sops-indigo); }
 
 .sops-sidebar-foot {
-  padding: .9rem 1.1rem;
+  box-sizing: border-box;
+  min-height: var(--sops-foot-h);
+  display: flex;
+  align-items: center;
+  padding: 0 1.1rem;
   border-top: 1px solid var(--sops-sidebar-border);
   color: #a0a5b3;
   font-size: .75rem;
@@ -290,38 +304,42 @@ body[data-sidebar-size="collapsed"] .sops-sidebar-link::before { display: none; 
 
 @media (max-width: 991.98px) {
   .sops-shell { flex-direction: column; }
+  /* 移动端侧边栏 = 离屏抽屉（汉堡菜单）：默认整体移出视口，顶栏按钮/遮罩/Esc/选中项 控制开合。
+     （原横向滚动菜单条交互差：无滚动提示、当前项常在视口外、父级点击跳转与展开冲突） */
   .sops-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 1045;
+    width: min(78vw, 300px);
+    height: 100%;
     flex: 0 0 auto;
-    width: 100%;
-    height: auto;
-    position: static;
-    flex-direction: row;
-    align-items: center;
-    overflow-x: auto;
+    flex-direction: column;
+    align-items: stretch;
+    overflow: hidden;
+    transform: translateX(-100%);
+    transition: transform .22s ease;
+    box-shadow: none;
   }
-  .sops-sidebar-brand { border-bottom: 0; padding: .65rem .9rem; flex-shrink: 0; }
-  .sops-sidebar-brand .sops-sidebar-title { display: none; }
-  .sops-sidebar-toggle { display: none; }
-  .sops-sidebar-nav { padding: .4rem .5rem; overflow: visible; }
-  .sops-sidebar-menu { flex-direction: row; }
-  .sops-sidebar-link { padding: .45rem .7rem; white-space: nowrap; }
-  .sops-sidebar-link::before,
-  .sops-submenu-link::before { display: none; }
-  .sops-sidebar-link .menu-icon { font-size: 1rem; margin-right: 6px; }
-  .sops-sidebar-foot { display: none; }
-  .sops-nav-has-children { position: relative; }
-  .sops-nav-has-children > .sops-sidebar-link-parent[aria-expanded="true"] .sops-nav-caret { transform: rotate(90deg); }
-  .sops-nav-has-children .collapse.show > .sops-submenu {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: .25rem;
-    margin: 0;
-    padding: .4rem .4rem 0;
+  body[data-mobile-nav="open"] .sops-sidebar {
+    transform: none;
+    box-shadow: 10px 0 28px rgba(15, 18, 26, .18);
   }
-  .sops-submenu-link { border-left: 0; border-radius: .4rem; padding: .4rem .7rem; }
-  .sops-submenu-link.active { border-left: 0; }
-  .sops-submenu-link .submenu-icon { margin-right: 4px; }
+  .sops-sidebar-brand { padding: .8rem 1rem; flex-shrink: 0; }
+  .sops-sidebar-brand .sops-sidebar-title { display: inline; }
+  .sops-sidebar-nav { padding: .5rem .6rem 1rem; overflow-y: auto; overflow-x: hidden; }
+  /* 触摸目标 ≥ 40px；激活指示条贴抽屉左缘 */
+  .sops-sidebar-link { padding: .6rem .7rem; white-space: nowrap; }
+  .sops-sidebar-link::before { left: 0; }
+  .sops-nav-has-children .collapse.show > .sops-submenu { padding-left: .4rem; }
+  .sops-submenu-link { padding: .55rem .7rem .55rem 2rem; }
+  .sops-submenu-link::before { left: 1rem; }
+  .sops-sidebar-foot { flex-shrink: 0; }
+  /* 顶栏按钮在移动端即汉堡开关（桌面为折叠按钮） */
+  .sops-sidebar-toggle { display: inline-flex; }
+  body[data-mobile-nav="open"] { overflow: hidden; }
+  body[data-mobile-nav="open"] .sops-nav-backdrop { display: block; }
 }
 
 /* ---------- 导航（旧白色顶栏，兼容未接入外壳的页面） ---------- */
@@ -355,8 +373,23 @@ body[data-sidebar-size="collapsed"] .sops-sidebar-link::before { display: none; 
 }
 .page-title { font-size: 14px; font-weight: 500; color: var(--sops-text); text-wrap: balance; }
 
-/* ---------- 页脚 ---------- */
-.footer-sops { background: var(--sops-surface); border-top: 1px solid var(--sops-border); color: var(--sops-muted); }
+/* ---------- 页脚（与侧边栏底部 .sops-sidebar-foot 等高：--sops-foot-h） ---------- */
+.footer-sops {
+  box-sizing: border-box;
+  min-height: var(--sops-foot-h);
+  display: flex;
+  align-items: center;
+  background: var(--sops-surface);
+  border-top: 1px solid var(--sops-border);
+  color: var(--sops-muted);
+}
+.footer-sops > .container { flex: 1 1 auto; margin-bottom: 0; margin-top: 0; }
+.footer-sops .footer-actions { display: flex; align-items: center; gap: .75rem; }
+.footer-logout { display: inline-flex; align-items: center; color: var(--sops-muted); text-decoration: none; }
+.footer-logout:hover, .footer-logout:focus { color: var(--sops-danger); text-decoration: none; }
+/* 顶栏右侧用户与登出（自 footer 迁移；.footer-logout 样式全局复用） */
+.sops-topbar-actions { display: flex; align-items: center; gap: .75rem; margin-left: auto; }
+.sops-topbar-actions .text-muted { font-size: .875rem; }
 
 /* ---------- 按钮 ---------- */
 .btn { border-radius: var(--sops-radius); font-weight: 500; font-size: .875rem; }
@@ -473,7 +506,7 @@ label { font-weight: 500; color: #374151; margin-bottom: .25rem; font-size: .812
   margin: 0 .1rem;
 }
 .bootstrap-table .pagination .page-link:hover { background: #eef0f5; color: var(--sops-indigo); }
-.bootstrap-table .pagination .page-item.active .page-link { background: var(--sops-indigo); border-color: var(--sops-indigo); }
+.bootstrap-table .pagination .page-item.active .page-link { background: var(--sops-indigo); border-color: var(--sops-indigo); color: #fff; }
 .bootstrap-table .pagination .page-item.disabled .page-link { color: var(--sops-muted); pointer-events: none; }
 .bootstrap-table .page-list .btn {
   background: #fff;

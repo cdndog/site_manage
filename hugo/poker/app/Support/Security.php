@@ -9,16 +9,24 @@ class Security
     const UID_COOKIE = 'siteops_uid';
     const AUTH_COOKIE = 'siteops_auth';
     const AUTH_TTL = 43200;
+    const LOGIN_NOTICE = '登录状态已失效，请登录后再操作';
 
     private static $currentUser = false;
     private static $currentPermissions = false;
     private static $dbUsers = null;
+    private static $loginRendered = false;
 
     public static function reset()
     {
         self::$currentUser = false;
         self::$currentPermissions = false;
         self::$dbUsers = null;
+        self::$loginRendered = false;
+    }
+
+    public static function loginRendered()
+    {
+        return self::$loginRendered;
     }
 
     public static function csrfUid()
@@ -96,6 +104,14 @@ class Security
         $expiry = time() + self::AUTH_TTL;
         $cookie = self::buildAuthCookie($user, $expiry);
         setcookie(self::AUTH_COOKIE, $cookie, $expiry, '/', '', false, true);
+    }
+
+    public static function clearAuthCookie()
+    {
+        if (!headers_sent()) {
+            setcookie(self::AUTH_COOKIE, '', time() - 3600, '/', '', false, true);
+        }
+        unset($_COOKIE[self::AUTH_COOKIE]);
     }
 
     public static function verifyAuthCookie($cookie)
@@ -214,7 +230,67 @@ class Security
         if (self::can($permission)) {
             return true;
         }
+        // 会话失效 → 跳登录页（携带有效 API token 的脚本调用维持原 403 行为）
+        if (self::sessionExpired() && !self::apiTokenValid()) {
+            self::renderLogin();
+            throw new PermissionDenied('forbidden: session expired');
+        }
         throw new PermissionDenied('forbidden: insufficient permission');
+    }
+
+    public static function sessionExpired()
+    {
+        if (!self::authEnabled()) {
+            return false;
+        }
+        if (self::isGitServerIp()) {
+            return false;
+        }
+        if (self::csrfUid() === '') {
+            return false;
+        }
+        return !self::authValid();
+    }
+
+    public static function requireSession($notice = self::LOGIN_NOTICE)
+    {
+        if (!self::sessionExpired()) {
+            return true;
+        }
+        self::renderLogin($notice);
+        return false;
+    }
+
+    private static function renderLogin($notice = self::LOGIN_NOTICE)
+    {
+        self::$loginRendered = true;
+        // 登录页响应先下发匿名 uid cookie，否则登录成功后仍会被判定为无会话（无限登录循环）
+        self::ensureUidCookie();
+        if (self::expectsJson()) {
+            if (!headers_sent()) {
+                http_response_code(401);
+                header('Content-Type: application/json; charset=utf-8');
+            }
+            echo json_encode(['ok' => false, 'code' => 401, 'message' => $notice], JSON_UNESCAPED_UNICODE);
+        } else {
+            \App\Controllers\AuthController::handle($notice);
+        }
+        if (!defined('SOPS_TESTING')) {
+            exit;
+        }
+    }
+
+    private static function expectsJson()
+    {
+        if (isset($_GET['format']) && $_GET['format'] === 'json') {
+            return true;
+        }
+        $requestedWith = isset($_SERVER['HTTP_X_REQUESTED_WITH']) ? strtolower(trim((string)$_SERVER['HTTP_X_REQUESTED_WITH'])) : '';
+        if ($requestedWith === 'xmlhttprequest') {
+            return true;
+        }
+        $accept = isset($_SERVER['HTTP_ACCEPT']) ? (string)$_SERVER['HTTP_ACCEPT'] : '';
+        return isset($_SERVER['HTTP_ORIGIN']) && strpos($accept, 'text/html') === false;
     }
 
     public static function isSystemPermission($permission)
@@ -306,10 +382,7 @@ class Security
             return;
         }
         if ($renderLogin && self::authEnabled()) {
-            \App\Controllers\AuthController::handle();
-            if (!defined('SOPS_TESTING')) {
-                exit;
-            }
+            self::renderLogin();
             return;
         }
         http_response_code(403);

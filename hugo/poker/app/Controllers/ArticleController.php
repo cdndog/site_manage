@@ -19,8 +19,7 @@ class ArticleController
         try {
             Security::requireApiToken(true);
             Security::ensureUidCookie();
-            if (!Security::authValid() && !Security::isGitServerIp()) {
-                AuthController::handle();
+            if (!Security::requireSession()) {
                 return;
             }
             Security::requirePermission('article.manage');
@@ -122,22 +121,26 @@ class ArticleController
 
     public static function dispatchList()
     {
-        Security::requireApiToken(true);
-        Security::requirePermission('article.view');
-        $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
-        if ($method === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete-article') {
-            self::handleArticleDelete();
-            return;
+        try {
+            Security::requireApiToken(true);
+            Security::requirePermission('article.view');
+            $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+            if ($method === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete-article') {
+                self::handleArticleDelete();
+                return;
+            }
+            if ($method === 'POST' && isset($_POST['action']) && $_POST['action'] === 'import-log') {
+                self::handleLogImport();
+                return;
+            }
+            $data = self::listData();
+            if ($data === null) {
+                return;
+            }
+            self::shell('文章列表', 'article_list', $data);
+        } catch (\Throwable $e) {
+            renderErrorPage($e);
         }
-        if ($method === 'POST' && isset($_POST['action']) && $_POST['action'] === 'import-log') {
-            self::handleLogImport();
-            return;
-        }
-        $data = self::listData();
-        if ($data === null) {
-            return;
-        }
-        self::shell('文章列表', 'article_list', $data);
     }
 
     private static function handleSiteList()
@@ -151,6 +154,7 @@ class ArticleController
             $list[] = [
                 'domain' => isset($site['domain']) ? (string)$site['domain'] : '',
                 'languages' => isset($site['languages']) ? (string)$site['languages'] : '',
+                'topnav_menus' => isset($site['topnav_menus']) ? (string)$site['topnav_menus'] : '',
             ];
         }
         self::emitJson(['total' => count($list), 'rows' => $list]);
@@ -185,18 +189,26 @@ class ArticleController
             $logFiles = [(string)Config::baseKey('log_file', 'editor_poker_allpost_list.txt')];
         }
         $results = [];
+        $errors = [];
         foreach ($logFiles as $logFile) {
-            $results[] = ArticleService::importFromLogFile(APP_PATH . '/' . ltrim((string)$logFile, '/'));
-        }
-        $firstError = null;
-        foreach ($results as $result) {
-            if (isset($result['error'])) {
-                $firstError = $result['error'];
-                break;
+            $path = ArticleService::resolveLogPath($logFile);
+            if ($path === '') {
+                continue;
             }
+            $result = ArticleService::importFromLogFile($path);
+            if (isset($result['error'])) {
+                // 单个日志文件缺失不再让整批导入失败：记为警告，继续处理其余文件
+                $errors[] = $result['error'];
+                $result['rows'] = [['ok' => false, 'message' => $result['error']]];
+            }
+            $results[] = $result;
         }
-        if ($firstError !== null) {
-            self::emitJson(['total' => 1, 'rows' => [['ok' => false, 'message' => $firstError]]]);
+        if (count($results) === 0) {
+            self::emitJson(['total' => 1, 'rows' => [['ok' => false, 'message' => '未配置日志文件（global_config.php 的 log_files / log_file）']]]);
+            return;
+        }
+        if (count($errors) === count($results)) {
+            self::emitJson(['total' => 1, 'rows' => [['ok' => false, 'message' => implode('；', $errors)]]]);
             return;
         }
         $imported = 0;
@@ -212,6 +224,9 @@ class ArticleController
             $rows = array_merge($rows, $result['rows']);
         }
         $summary = '导入完成：文件 ' . count($results) . ' 个，新增 ' . $imported . ' 条，已存在跳过 ' . $skipped . ' 条，JSON 缺失跳过 ' . $missing . ' 条，失败 ' . $failed . ' 条';
+        if (count($errors) > 0) {
+            $summary .= '；警告：' . count($errors) . ' 个文件不可读（' . implode('；', $errors) . '）';
+        }
         self::emitJson(['total' => count($rows), 'rows' => array_merge([['ok' => true, 'message' => $summary]], $rows)]);
     }
 
@@ -282,8 +297,7 @@ class ArticleController
         header('X-Frame-Options: SAMEORIGIN');
         try {
             Security::ensureUidCookie();
-            if (!Security::authValid() && !Security::isGitServerIp()) {
-                AuthController::handle();
+            if (!Security::requireSession()) {
                 return;
             }
             Security::requirePermission('article.view');
