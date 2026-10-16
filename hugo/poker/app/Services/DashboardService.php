@@ -91,16 +91,11 @@ class DashboardService
 
     /**
      * 单个维度（站点 / 话题 / 关键词 / 文章）的当日 / 本周 / 本月新增计数。
-     * 当日 = 今日 00:00 起，本周 = 滚动近 7 天，本月 = 本月 01 日 00:00 起。
+     * 当日 = 【配置显示时区】今日 00:00 起，本周 = 滚动近 7 天，本月 = 【配置显示时区】本月 01 日 00:00 起。
      */
     private static function newcomers(array $rows, $field)
     {
-        $now = time();
-        $windows = [
-            'today' => strtotime(date('Y-m-d 00:00:00')),
-            'week' => $now - 7 * 86400,
-            'month' => strtotime(date('Y-m-01 00:00:00')),
-        ];
+        $windows = self::newcomerWindows();
         $counts = ['today' => 0, 'week' => 0, 'month' => 0];
         foreach ($rows as $row) {
             $ts = self::ts(isset($row[$field]) ? $row[$field] : '');
@@ -114,6 +109,24 @@ class DashboardService
             }
         }
         return $counts;
+    }
+
+    /**
+     * 当日 / 本周 / 本月 统计窗口的起始时间戳。
+     *  - 当日 = 【显示时区】今日 00:00（如配置为上海时区，即上海 0 点而非 UTC 0 点）
+     *  - 本月 = 【显示时区】本月 01 日 00:00
+     *  - 本周 = 滚动近 7 天（时长口径，与时区无关）
+     * 存储时间戳为绝对时间（UTC 存储），此处仅决定「从哪一刻起算」，跨时区语义由显示时区决定。
+     */
+    private static function newcomerWindows()
+    {
+        $tz = new \DateTimeZone(\App\Config::displayTimezone());
+        $now = new \DateTimeImmutable('now', $tz);
+        return [
+            'today' => $now->setTime(0, 0, 0)->getTimestamp(),
+            'week' => time() - 7 * 86400,
+            'month' => $now->modify('first day of this month')->setTime(0, 0, 0)->getTimestamp(),
+        ];
     }
 
     /**

@@ -106,8 +106,13 @@
           </select>
         </div>
         <div class="col-md-3 col-xs-12">
+          <?php if (!empty($json_edit)): ?>
+          <label class="badge badge-light my-2" for="post_slug"><i class="bi bi-file-earmark-text mr-1" aria-hidden="true"></i>链接名称：<b class="text-muted">（文章url名称SEO优化，可选项）</b></label>
+          <input type="text" class="form-control form-control-sm" id="post_slug" name="post_slug" placeholder="示例：post-nice-name" value="<?php echo e($form['savename']); ?>">
+          <?php else: ?>
           <label class="badge badge-light my-2" for="post_savename"><i class="bi bi-file-earmark-text mr-1" aria-hidden="true"></i>保存名称：<b class="text-muted">（文章url名称SEO优化，可选项）</b></label>
           <input type="text" class="form-control form-control-sm" id="post_savename" name="post_savename" placeholder="示例：post-nice-name" value="<?php echo e($form['savename']); ?>">
+          <?php endif; ?>
         </div>
       </div>
     </div>
@@ -172,18 +177,23 @@
 <script type="module">
     import slug from './js/slug.js';
 
-    document.getElementById('post_savename').addEventListener('focusout', function() {
-        const input = document.getElementById('post_savename');
-        const opts = {
-            replacement: '-',
-            lower: true,
-            trim: true,
-            fallback: true
-        };
-        const parts = input.value.split('/');
-        const slugifiedParts = parts.map(part => slug(part, opts));
-        input.value = slugifiedParts.join('/');
-    });
+    (function () {
+        var fieldId = <?php echo json_encode(!empty($json_edit) ? 'post_slug' : 'post_savename'); ?>;
+        var el = document.getElementById(fieldId);
+        if (!el) return;
+        el.addEventListener('focusout', function() {
+            const input = el;
+            const opts = {
+                replacement: '-',
+                lower: true,
+                trim: true,
+                fallback: true
+            };
+            const parts = input.value.split('/');
+            const slugifiedParts = parts.map(part => slug(part, opts));
+            input.value = slugifiedParts.join('/');
+        });
+    })();
 </script>
 
 <script>

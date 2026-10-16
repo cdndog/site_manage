@@ -3106,6 +3106,203 @@ test('uivision_upload pure JSON saves', file_exists($GLOBALS['dataDir'] . '/seod
 @unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST005.txt');
 @unlink($GLOBALS['dataDir'] . '/uiaigcdatas/UIVTEST006.txt');
 
+echo "== image_search (Google/Bing 图片关键词搜索) ==\n";
+putenv('APP_API_CSRF_TOKENS=');
+App\Config::reset();
+App\Support\Security::reset();
+
+$iszUrl = App\Services\ImageSearchService::buildUrl('cat & dog');
+test('image_search buildUrl targets google images', strpos($iszUrl, 'https://www.google.com/search?') === 0 && strpos($iszUrl, '&tbm=isch') !== false, $iszUrl);
+test('image_search buildUrl encodes keyword', strpos($iszUrl, 'q=cat+%26+dog') !== false, $iszUrl);
+test('image_search buildUrl keeps filter params', strpos($iszUrl, 'tbs=isz:lt,islt:xga,iar:w,itp:,ift:,sur:,qdr:,ic:') !== false && strpos($iszUrl, '&safe=active') !== false && strpos($iszUrl, '&nfpr=1') !== false && strpos($iszUrl, '&filter=0') !== false, $iszUrl);
+
+// 贴近真实的 Google 图片内联结果片段：https 条目 + http 条目(不捕获) + gstatic 缩略图(排除)
+$iszFixture = '<html><body><script>AF_initDataCallback({key:"ds:1",data:[["https://images.cats.com/a.jpg",640,480],["http://cdn.dogs.org/b.png",300,200],["https://encrypted-tbn0.gstatic.com/images?q=tbn:x",100,100],["https://pics.animals.io/c.webp",800,600],["https://more.zoo.net/d.gif",50,50]]});</script></body></html>';
+$iszParsed = App\Services\ImageSearchService::parseImageUrls($iszFixture, 20);
+test('image_search parses per-entry https urls', count($iszParsed) === 3, json_encode($iszParsed));
+test('image_search rewrites to i1 proxy', $iszParsed[0] === 'https://i1.wp.com/images.cats.com/a.jpg', $iszParsed[0] ?? '');
+test('image_search drops http-only entries', implode(' ', $iszParsed) === 'https://i1.wp.com/images.cats.com/a.jpg https://i1.wp.com/pics.animals.io/c.webp https://i1.wp.com/more.zoo.net/d.gif', implode(' ', $iszParsed));
+test('image_search excludes gstatic thumbnails', strpos(implode(' ', $iszParsed), 'gstatic') === false, implode(' ', $iszParsed));
+test('image_search does not span entry boundaries', strpos($iszParsed[0], '","') === false && strpos($iszParsed[0], '",') === false, $iszParsed[0] ?? '');
+
+$iszMany = '<script>data:[' . implode(',', array_map(function ($i) {
+    return '["https://host' . $i . '.example.com/img' . $i . '.jpg",' . (100 + $i) . ',' . (200 + $i) . ']';
+}, range(1, 25))) . ']</script>';
+test('image_search respects default 20 limit', count(App\Services\ImageSearchService::parseImageUrls($iszMany)) === 20, '');
+test('image_search respects custom limit', count(App\Services\ImageSearchService::parseImageUrls($iszMany, 5)) === 5, '');
+test('image_search empty html returns empty', App\Services\ImageSearchService::parseImageUrls('', 20) === [], '');
+
+// 端到端：fixture 注入后走 api/image_search.php
+$GLOBALS['__imageSearchFixtureHtml'] = $iszFixture;
+resetRequest();
+$_GET = ['q' => 'cat', 'limit' => 20];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszJson = json_decode($out, true);
+test('image_search endpoint returns ok json', is_array($iszJson) && ($iszJson['ok'] ?? false) === true, $out);
+test('image_search endpoint uses google engine', ($iszJson['engine'] ?? '') === 'google', $out);
+test('image_search endpoint echoes keyword', ($iszJson['keyword'] ?? '') === 'cat', $out);
+test('image_search endpoint count matches images', (int)($iszJson['count'] ?? 0) === 3 && count($iszJson['images'] ?? []) === 3, $out);
+test('image_search endpoint images are proxied urls', ($iszJson['images'][0] ?? '') === 'https://i1.wp.com/images.cats.com/a.jpg', $out);
+test('image_search endpoint exposes source url', strpos($iszJson['source'] ?? '', 'tbm=isch') !== false && strpos($iszJson['source'] ?? '', 'q=cat') !== false, $out);
+
+resetRequest();
+$_GET = ['keyword' => 'dog', 'csrf_token' => ''];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszJson = json_decode($out, true);
+test('image_search accepts keyword alias', ($iszJson['ok'] ?? false) === true && ($iszJson['keyword'] ?? '') === 'dog', $out);
+
+resetRequest();
+$_GET = [];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+test('image_search missing q returns error', strpos($out, 'error') !== false || strpos($out, 'q (or keyword) parameter required') !== false, $out);
+
+resetRequest();
+$_GET = ['q' => 'cat'];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+test('image_search rejects non GET', strpos($out, 'method not allowed') !== false, $out);
+
+// --- Bing 兜底引擎：真实图片地址解析 ---
+$bingUrl = App\Services\ImageSearchService::buildBingUrl('cat & dog');
+test('image_search buildBingUrl targets bing images', strpos($bingUrl, 'https://www.bing.com/images/search?q=cat+%26+dog') === 0, $bingUrl);
+
+// 贴近真实的 Bing 结果片段：iusc 锚点 m="{...murl...}"（HTML 实体编码 JSON）
+$bingFixture = '<html><body>'
+    . '<a class="iusc" m="{&quot;purl&quot;:&quot;https://a.example/&quot;,&quot;murl&quot;:&quot;https://img.example.com/cat1.jpg&quot;,&quot;turl&quot;:&quot;https://t.example.com/t1.jpg&quot;}"></a>'
+    . '<a class="iusc" m="{&quot;murl&quot;:&quot;https://img.example.com/cat2.png&quot;}"></a>'
+    . '<a class="iusc" m="{&quot;murl&quot;:&quot;https://img.example.com/cat3.webp&quot;}"></a>'
+    . '<a class="iusc" m="{&quot;murl&quot;:&quot;https://img.example.com/cat2.png&quot;}"></a>'
+    . '</body></html>';
+$bingParsed = App\Services\ImageSearchService::parseBingImageUrls($bingFixture, 20);
+test('image_search bing extracts murl urls', count($bingParsed) === 3, json_encode($bingParsed));
+test('image_search bing keeps real image urls', $bingParsed[0] === 'https://img.example.com/cat1.jpg', $bingParsed[0] ?? '');
+test('image_search bing dedupes urls', count(array_unique($bingParsed)) === 3, json_encode($bingParsed));
+test('image_search bing respects limit', count(App\Services\ImageSearchService::parseBingImageUrls($bingFixture, 2)) === 2, '');
+// 回退：无 iusc 锚点时用 entity 正则
+$bingEntityOnly = '<div data-x="{&quot;murl&quot;:&quot;https://only.example.com/x.jpg&quot;}"></div>';
+test('image_search bing entity fallback', App\Services\ImageSearchService::parseBingImageUrls($bingEntityOnly, 20) === ['https://only.example.com/x.jpg'], json_encode(App\Services\ImageSearchService::parseBingImageUrls($bingEntityOnly, 20)));
+test('image_search bing empty html returns empty', App\Services\ImageSearchService::parseBingImageUrls('', 20) === [], '');
+
+// 端到端兜底：Google fixture 为 Bing 页 → Google 解析 0 条 → 自动回退 Bing 拿到真实图片
+$GLOBALS['__imageSearchFixtureHtml'] = $bingFixture;
+resetRequest();
+$_GET = ['q' => 'cat', 'limit' => 20];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszJson = json_decode($out, true);
+test('image_search falls back to bing when google empty', ($iszJson['ok'] ?? false) === true && ($iszJson['engine'] ?? '') === 'bing', $out);
+test('image_search bing fallback returns real images', (int)($iszJson['count'] ?? 0) === 3 && ($iszJson['images'][0] ?? '') === 'https://img.example.com/cat1.jpg', $out);
+test('image_search bing source url exposed', strpos($iszJson['source'] ?? '', 'bing.com/images/search') !== false, $out);
+unset($GLOBALS['__imageSearchFixtureHtml']);
+
+putenv('APP_API_CSRF_TOKENS=iszkey-1');
+App\Config::reset();
+App\Support\Security::reset();
+resetRequest();
+$_GET = ['q' => 'cat'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+test('image_search forbidden without api token', strpos($out, 'forbidden') !== false, $out);
+putenv('APP_API_CSRF_TOKENS=');
+App\Config::reset();
+App\Support\Security::reset();
+
+// --- 代理支持 ---
+App\Services\ImageSearchService::setProxy('127.0.0.1:7890');
+test('image_search setProxy overrides', App\Services\ImageSearchService::proxy() === '127.0.0.1:7890', App\Services\ImageSearchService::proxy());
+App\Services\ImageSearchService::setProxy(null);
+putenv('APP_IMAGE_SEARCH_PROXY=10.0.0.2:8080');
+test('image_search proxy reads env', App\Services\ImageSearchService::proxy() === '10.0.0.2:8080', App\Services\ImageSearchService::proxy());
+putenv('APP_IMAGE_SEARCH_PROXY');
+App\Services\ImageSearchService::setProxy(null);
+test('image_search proxy empty by default', App\Services\ImageSearchService::proxy() === '', App\Services\ImageSearchService::proxy());
+
+// --- 可访问性 / 图片类型 / 版权过滤 ---
+test('image_search flags shutterstock as copyright restricted', App\Services\ImageSearchService::isCopyrightRestricted('https://www.shutterstock.com/image-photo/cat-123.jpg') === true, '');
+test('image_search flags gettyimages subdomain restricted', App\Services\ImageSearchService::isCopyrightRestricted('https://media.gettyimages.com/id/1/photo.jpg') === true, '');
+test('image_search allows normal cdn host', App\Services\ImageSearchService::isCopyrightRestricted('https://dinoanimals.com/wp-content/uploads/cat.jpg') === false, '');
+test('image_search isImageType accepts image content type', App\Services\ImageSearchService::isImageType('image/jpeg', 'https://x.com/a') === true, '');
+test('image_search isImageType rejects html content type', App\Services\ImageSearchService::isImageType('text/html', 'https://x.com/a.jpg') === false, '');
+test('image_search isImageType falls back to extension when no type', App\Services\ImageSearchService::isImageType('', 'https://x.com/a.webp') === true && App\Services\ImageSearchService::isImageType('', 'https://x.com/a.txt') === false, '');
+
+$iszValidateStub = [
+    'https://good.example.com/a.jpg' => ['ok' => true, 'type' => 'image/jpeg'],
+    'https://www.shutterstock.com/image-photo/x.jpg' => ['ok' => true, 'type' => 'image/jpeg'],
+    'https://bad.example.com/page.html' => ['ok' => true, 'type' => 'text/html'],
+    'https://down.example.com/b.png' => ['ok' => false, 'type' => ''],
+    'https://good2.example.com/c.webp' => ['ok' => true, 'type' => 'image/webp'],
+];
+$iszValidateUrls = array_keys($iszValidateStub);
+$GLOBALS['__imageSearchValidateStub'] = $iszValidateStub;
+$iszVal = App\Services\ImageSearchService::validate($iszValidateUrls, 20);
+test('image_search validate checks all candidates', $iszVal['checked'] === 5, json_encode($iszVal));
+test('image_search validate keeps accessible images only', $iszVal['images'] === ['https://good.example.com/a.jpg', 'https://good2.example.com/c.webp'], json_encode($iszVal['images']));
+test('image_search validate drops copyright restricted', !in_array('https://www.shutterstock.com/image-photo/x.jpg', $iszVal['images'], true), '');
+test('image_search validate drops non-image content type', !in_array('https://bad.example.com/page.html', $iszVal['images'], true), '');
+test('image_search validate drops inaccessible', !in_array('https://down.example.com/b.png', $iszVal['images'], true), '');
+test('image_search validate respects limit', count(App\Services\ImageSearchService::validate($iszValidateUrls, 1)['images']) === 1, '');
+
+// 端到端：注入 Google fixture + 校验 stub，返回经版权/类型过滤后的地址
+// 注意：Google 解析会把地址改写为 i1.wp.com 代理，stub 需按改写后的地址键入
+$GLOBALS['__imageSearchFixtureHtml'] = '<script>data:[["https://good.example.com/a.jpg",640,480],["https://www.shutterstock.com/s/x.jpg",300,200],["https://page.example.com/p.html",800,600]]</script>';
+$GLOBALS['__imageSearchValidateStub'] = [
+    'https://i1.wp.com/good.example.com/a.jpg' => ['ok' => true, 'type' => 'image/jpeg'],
+    'https://i1.wp.com/www.shutterstock.com/s/x.jpg' => ['ok' => true, 'type' => 'image/jpeg'],
+    'https://i1.wp.com/page.example.com/p.html' => ['ok' => true, 'type' => 'text/html'],
+];
+resetRequest();
+$_GET = ['q' => 'cat', 'limit' => 20];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszValJson = json_decode($out, true);
+test('image_search endpoint validates and filters', ($iszValJson['validated'] ?? false) === true && (int)($iszValJson['checked'] ?? 0) === 3 && ($iszValJson['images'] ?? []) === ['https://i1.wp.com/good.example.com/a.jpg'], $out);
+unset($GLOBALS['__imageSearchFixtureHtml']);
+unset($GLOBALS['__imageSearchValidateStub']);
+
+// validate=0 跳过校验：返回解析到的原始地址（含非图片/版权受限），validated=false
+$GLOBALS['__imageSearchFixtureHtml'] = '<script>data:[["https://good.example.com/a.jpg",640,480],["https://www.shutterstock.com/s/x.jpg",300,200]]</script>';
+resetRequest();
+$_GET = ['q' => 'cat', 'limit' => 20, 'validate' => '0'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszNoVal = json_decode($out, true);
+test('image_search validate=0 skips validation', ($iszNoVal['validated'] ?? true) === false && (int)($iszNoVal['count'] ?? 0) === 2, $out);
+unset($GLOBALS['__imageSearchFixtureHtml']);
+
+// --- 实网验证：经代理 127.0.0.1:7890 搜索，必须返回真实图片地址 ---
+$liveProxy = getenv('APP_IMAGE_SEARCH_PROXY') ?: '127.0.0.1:7890';
+App\Services\ImageSearchService::setProxy($liveProxy);
+resetRequest();
+$liveMeta = App\Services\ImageSearchService::searchWithMeta('cat', 20);
+$liveImages = $liveMeta['images'];
+if (count($liveImages) > 0) {
+    test('image_search live returns real images via proxy', count($liveImages) > 0 && preg_match('#^https?://#', $liveImages[0]) === 1, json_encode(array_slice($liveImages, 0, 3)));
+    test('image_search live engine is google or bing', in_array($liveMeta['engine'], ['google', 'bing'], true), $liveMeta['engine']);
+    // 端到端实网（走接口）
+    resetRequest();
+    $_GET = ['q' => 'cat', 'limit' => 10];
+    $_SERVER['REQUEST_METHOD'] = 'GET';
+    $out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+    $liveJson = json_decode($out, true);
+    test('image_search live endpoint returns images', ($liveJson['ok'] ?? false) === true && (int)($liveJson['count'] ?? 0) > 0 && in_array($liveJson['engine'] ?? '', ['google', 'bing'], true), substr($out, 0, 300));
+    // 实网可访问性校验：HEAD/Range GET 探测，须返回可外链的图片地址
+    $liveVal = App\Services\ImageSearchService::validate($liveImages, 10);
+    test('image_search live validate finds accessible images', $liveVal['checked'] > 0 && count($liveVal['images']) > 0 && preg_match('#^https?://#', $liveVal['images'][0]) === 1, json_encode($liveVal));
+    // 实网端到端默认开启校验：返回地址须为已校验的图片
+    resetRequest();
+    $_GET = ['q' => 'cat', 'limit' => 10];
+    $_SERVER['REQUEST_METHOD'] = 'GET';
+    $out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+    $liveValJson = json_decode($out, true);
+    test('image_search live endpoint validates by default', ($liveValJson['validated'] ?? false) === true && (int)($liveValJson['count'] ?? 0) > 0 && (int)($liveValJson['checked'] ?? 0) >= (int)($liveValJson['count'] ?? -1), substr($out, 0, 300));
+} else {
+    echo "SKIP: 实网经代理 {$liveProxy} 未取到结果（代理/网络不可用），解析与兜底逻辑已由 fixture 测试覆盖\n";
+}
+App\Services\ImageSearchService::setProxy(null);
+
 echo "== publish_edit JSON merge (only form fields) ==\n";
 putenv('APP_API_CSRF_TOKENS=');
 putenv('APP_AUTH_USER');
@@ -3144,8 +3341,8 @@ file_put_contents($mergeFile, json_encode([[
 ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
 $html = runRequest(['eid' => $mergeId], [], 'GET', [], '/publish_edit.php');
-preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm);
-test('publish_edit form prefills savename', isset($sm[1]) && $sm[1] === 'old-slug', isset($sm[1]) ? $sm[1] : 'no match');
+preg_match('/id="post_slug"[^>]*value="([^"]*)"/', $html, $sm);
+test('publish_edit form prefills slug field', isset($sm[1]) && $sm[1] === 'old-slug', isset($sm[1]) ? $sm[1] : 'no match');
 test('publish_edit form prefills title from json', strpos($html, 'value="Old Title"') !== false, substr($html, 0, 200));
 
 $mergePost = [
@@ -3161,7 +3358,7 @@ $mergePost = [
     'post_lang' => 'zh',
     'post_series' => 'news',
     'post_pubdir' => 'article',
-    'post_savename' => 'new-slug',
+    'post_slug' => 'new-slug',
     'post_pubdomain' => ['newpoker.com'],
     'post_globalpublish' => 'yes',
     'post_translate_to_langs' => ['de'],
@@ -3180,7 +3377,7 @@ test('publish_edit keeps createAt original', (int)($merged['createAt']['text'][0
 test('publish_edit keeps upload_site original', ($merged['upload_site'] ?? '') === 'https://custom.example.com', (string)($merged['upload_site'] ?? ''));
 test('publish_edit replaces title text without append', ($merged['title']['text'] ?? null) === ['New Title'], json_encode($merged['title']['text'] ?? null));
 test('publish_edit replaces content html without append', ($merged['content']['html'] ?? null) === ['<p>new body</p>'], json_encode($merged['content']['html'] ?? null));
-test('publish_edit writes adjusted savename + slug', ($merged['savename']['text'][0] ?? '') === 'new-slug' && ($merged['slug']['text'][0] ?? '') === 'new-slug', json_encode($merged['slug'] ?? null));
+test('publish_edit writes slug only leaves savename untouched', ($merged['slug']['text'][0] ?? '') === 'new-slug' && ($merged['savename']['text'][0] ?? '') === 'old-slug', json_encode($merged['slug'] ?? null));
 test('publish_edit writes adjusted lang + pubdomain', ($merged['lang'] ?? '') === 'zh' && ($merged['pubdomain'] ?? null) === ['newpoker.com'] && ($merged['globalpublish'] ?? '') === 'yes', json_encode($merged['pubdomain'] ?? null));
 test('publish_edit bumps update_date', !empty($merged['update_date']), (string)($merged['update_date'] ?? ''));
 
@@ -3196,12 +3393,12 @@ file_put_contents($mergeFile2, json_encode([[
     'createAt' => ['text' => [1700000001]],
 ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 $html = runRequest(['eid' => $mergeId2], [], 'GET', [], '/publish_edit.php');
-preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm2);
-test('publish_edit shows diverged savename value', isset($sm2[1]) && $sm2[1] === 'other-name', isset($sm2[1]) ? $sm2[1] : 'no match');
+preg_match('/id="post_slug"[^>]*value="([^"]*)"/', $html, $sm2);
+test('publish_edit shows diverged slug value', isset($sm2[1]) && $sm2[1] === 'keep-slug', isset($sm2[1]) ? $sm2[1] : 'no match');
 $post2 = $mergePost;
 $post2['post_uuid'] = $mergeId2;
 $post2['post_title'] = 'Two Edited';
-$post2['post_savename'] = 'other-name';
+$post2['post_slug'] = 'keep-slug';
 $post2['post_url'] = 'https://example.com/two.html';
 $post2['post_lang'] = 'en';
 $post2['post_globalpublish'] = 'no';
@@ -3222,29 +3419,29 @@ test('publish_edit keeps untouched slug value', ($merged2['slug']['text'][0] ?? 
 test('publish_edit keeps untouched savename value', ($merged2['savename']['text'][0] ?? '') === 'other-name', json_encode($merged2['savename'] ?? null));
 test('publish_edit edits title while slug untouched', ($merged2['title']['text'][0] ?? '') === 'Two Edited' && ($merged2['createAt']['text'][0] ?? 0) == 1700000001, json_encode($merged2['title'] ?? null));
 
-// 改动保存名称时 slug 同步跟随
+// 改动链接名称时仅 slug 更新，savename 保持不动
 $post3 = $post2;
-$post3['post_savename'] = 'renamed-slug';
+$post3['post_slug'] = 'renamed-slug';
 runRequest(['eid' => $mergeId2], $post3, 'POST', [], '/publish_edit.php');
 $raw2 = json_decode((string)file_get_contents($mergeFile2), true);
 $merged2 = is_array($raw2) && isset($raw2[0]) && is_array($raw2[0]) ? $raw2[0] : $raw2;
-test('publish_edit syncs slug when savename edited', ($merged2['savename']['text'][0] ?? '') === 'renamed-slug' && ($merged2['slug']['text'][0] ?? '') === 'renamed-slug', json_encode($merged2['slug'] ?? null));
+test('publish_edit updates slug only keeps savename untouched', ($merged2['slug']['text'][0] ?? '') === 'renamed-slug' && ($merged2['savename']['text'][0] ?? '') === 'other-name', json_encode($merged2['slug'] ?? null));
 // 仅剩 savename 没有 slug 的 JSON，回填 slug
 $mergeId3 = '1700000000MERGE03';
 $mergeFile3 = $mergeDir . '/' . $mergeId3 . '.json';
 file_put_contents($mergeFile3, json_encode([['post_uuid' => $mergeId3, 'url' => 'https://example.com/three.html', 'title' => ['text' => ['Three']], 'slug' => ['text' => ['three-slug']]]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 $html = runRequest(['eid' => $mergeId3], [], 'GET', [], '/publish_edit.php');
-preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm3);
-test('publish_edit falls back to slug for savename', isset($sm3[1]) && $sm3[1] === 'three-slug', isset($sm3[1]) ? $sm3[1] : 'no match');
+preg_match('/id="post_slug"[^>]*value="([^"]*)"/', $html, $sm3);
+test('publish_edit binds slug field directly', isset($sm3[1]) && $sm3[1] === 'three-slug', isset($sm3[1]) ? $sm3[1] : 'no match');
 $post4 = $post2;
 $post4['post_uuid'] = $mergeId3;
 $post4['post_title'] = 'Three';
-$post4['post_savename'] = 'three-slug';
+$post4['post_slug'] = 'three-slug';
 $post4['post_url'] = 'https://example.com/three.html';
 runRequest(['eid' => $mergeId3], $post4, 'POST', [], '/publish_edit.php');
 $raw3 = json_decode((string)file_get_contents($mergeFile3), true);
 $merged3 = is_array($raw3) && isset($raw3[0]) && is_array($raw3[0]) ? $raw3[0] : $raw3;
-test('publish_edit backfills savename from slug', ($merged3['savename']['text'][0] ?? '') === 'three-slug' && ($merged3['slug']['text'][0] ?? '') === 'three-slug', json_encode($merged3['savename'] ?? null));
+test('publish_edit leaves savename absent slug preserved', ($merged3['savename'] ?? null) === null && ($merged3['slug']['text'][0] ?? '') === 'three-slug', json_encode($merged3['savename'] ?? null));
 
 @unlink($mergeFile);
 @unlink($mergeFile2);
@@ -3275,8 +3472,8 @@ file_put_contents($strFile, json_encode([[
     'translate_to_langs' => ['fr'],
 ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 $html = runRequest(['eid' => $strId], [], 'GET', [], '/publish_edit.php');
-preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm4);
-test('string text savename prefills full value not first char', isset($sm4[1]) && $sm4[1] === 'casino-guide', isset($sm4[1]) ? $sm4[1] : 'no match');
+preg_match('/id="post_slug"[^>]*value="([^"]*)"/', $html, $sm4);
+test('string text slug prefills full value not first char', isset($sm4[1]) && $sm4[1] === 'casino-guide', isset($sm4[1]) ? $sm4[1] : 'no match');
 test('string text title prefills full value', strpos($html, 'value="Casino Guide Title"') !== false, '');
 test('string text description prefills full value', strpos($html, 'value="Full description text"') !== false, '');
 test('string text keywords prefills full list', strpos($html, 'value="kw1,kw2"') !== false, '');
@@ -3296,7 +3493,7 @@ $strPost = [
     'post_lang' => 'en',
     'post_series' => 'news',
     'post_pubdir' => 'article',
-    'post_savename' => 'casino-guide',
+    'post_slug' => 'casino-guide',
     'post_pubdomain' => ['strfmt.example.com'],
     'post_globalpublish' => 'no',
     'post_translate_to_langs' => ['fr'],
@@ -3317,13 +3514,13 @@ test('article row keeps full string values', count($strRow) === 1 && $strRow[0][
 $strAigc = db("SELECT keyword FROM aigc_status WHERE ctx_id = '$strId'");
 test('aigc index keyword keeps full topic', count($strAigc) === 1 && $strAigc[0]['keyword'] === 'Casino Topic', json_encode($strAigc[0] ?? null));
 
-// 改名后仍保持字符串格式（不得变成 ["value"] 数组）
+// 改名后 slug 保持字符串格式，savename 不动（不得变成 ["value"] 数组）
 $strPost2 = $strPost;
-$strPost2['post_savename'] = 'renamed-guide';
+$strPost2['post_slug'] = 'renamed-guide';
 runRequest(['eid' => $strId], $strPost2, 'POST', [], '/publish_edit.php');
 $rawS = json_decode((string)file_get_contents($strFile), true);
 $mS = is_array($rawS) && isset($rawS[0]) && is_array($rawS[0]) ? $rawS[0] : $rawS;
-test('rename keeps savename and slug string format', ($mS['savename']['text'] ?? null) === 'renamed-guide' && ($mS['slug']['text'] ?? null) === 'renamed-guide', json_encode([$mS['savename'] ?? null, $mS['slug'] ?? null]));
+test('rename keeps slug string format savename untouched', ($mS['savename']['text'] ?? null) === 'casino-guide' && ($mS['slug']['text'] ?? null) === 'renamed-guide', json_encode([$mS['savename'] ?? null, $mS['slug'] ?? null]));
 
 // savename 缺失、slug.text 为字符串时回填完整 slug（而非首字符）
 $strId2 = '1700000000STRFMT2';
@@ -3336,8 +3533,8 @@ file_put_contents($strFile2, json_encode([[
     'createAt' => ['text' => [1600000098]],
 ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 $html = runRequest(['eid' => $strId2], [], 'GET', [], '/publish_edit.php');
-preg_match('/id="post_savename"[^>]*value="([^"]*)"/', $html, $sm5);
-test('string text slug fallback prefills full value', isset($sm5[1]) && $sm5[1] === 'slug-string-name', isset($sm5[1]) ? $sm5[1] : 'no match');
+preg_match('/id="post_slug"[^>]*value="([^"]*)"/', $html, $sm5);
+test('string text slug prefills full value directly', isset($sm5[1]) && $sm5[1] === 'slug-string-name', isset($sm5[1]) ? $sm5[1] : 'no match');
 
 @unlink($strFile);
 @unlink($strFile2);
@@ -3366,6 +3563,7 @@ file_put_contents($formFile, json_encode([[
 ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
 $html = runRequest(['eid' => $formId], [], 'GET', [], '/publish_edit.php');
+test('publish_edit uses post_slug field with link-name label', strpos($html, 'id="post_slug"') !== false && strpos($html, 'name="post_slug"') !== false && strpos($html, '链接名称：') !== false && strpos($html, 'id="post_savename"') === false && strpos($html, '保存名称：') === false, substr($html, (int)strpos($html, 'post_slug') - 120, 240));
 test('publish_edit hides globalpublish switch', strpos($html, 'id="post_globalpublish"') === false && strpos($html, 'id="autopublish"') === false, substr($html, 0, 200));
 test('publish_edit hides autotranslate block', strpos($html, 'id="autotranslate"') === false && strpos($html, 'name="post_translate_to_langs[]"') === false, substr($html, 0, 200));
 test('publish_edit keeps pubdir config value as option', strpos($html, '<option data-subtext="配置值" value="custom-dir-not-in-config" selected>') !== false, 'pubdir fallback missing');
@@ -3373,6 +3571,7 @@ test('publish_edit keeps unknown pubdomain as option', strpos($html, '<option da
 test('publish_edit emits site menu script', strpos($html, 'js/sops-site-menus.js') !== false && strpos($html, 'sopsAttachSiteMenus({') !== false && strpos($html, "triggerId: 'post_pubdomain'") !== false, substr($html, -600));
 test('publish_edit select carries data-id', strpos($html, 'data-id="post_pubdir"') !== false && strpos($html, 'data-id="post_pubdomain"') !== false, '');
 $htmlArticle = runRequest([], [], 'GET', [], '/article_new.php');
+test('article_new keeps post_savename field with save-name label', strpos($htmlArticle, 'id="post_savename"') !== false && strpos($htmlArticle, 'name="post_savename"') !== false && strpos($htmlArticle, '保存名称：') !== false && strpos($htmlArticle, 'id="post_slug"') === false && strpos($htmlArticle, '链接名称：') === false, substr($htmlArticle, (int)strpos($htmlArticle, 'post_savename') - 120, 240));
 test('article_new hides publish/autotranslate switch', strpos($htmlArticle, 'id="post_globalpublish"') === false && strpos($htmlArticle, 'id="autopublish"') === false && strpos($htmlArticle, 'id="autotranslate"') === false && strpos($htmlArticle, 'name="post_translate_to_langs[]"') === false, substr($htmlArticle, 0, 200));
 test('article_new emits site menu script', strpos($htmlArticle, 'js/sops-site-menus.js') !== false && strpos($htmlArticle, 'sopsAttachSiteMenus({') !== false && strpos($htmlArticle, "triggerId: 'post_pubdomain'") !== false && strpos($htmlArticle, "targetId: 'post_pubdir'") !== false && strpos($htmlArticle, 'data-id="post_pubdir"') !== false, '');
 preg_match('/id="post_pubdir".*?<\/select>/s', $htmlArticle, $mPubdir);
@@ -3400,7 +3599,7 @@ $formPost = [
     'post_lang' => 'en',
     'post_series' => 'news',
     'post_pubdir' => 'custom-dir-not-in-config',
-    'post_savename' => 'form-test',
+    'post_slug' => 'form-test',
     'post_pubdomain' => ['ghost.example.com'],
     'csrf_token' => 'x',
     'setupNum' => 'ckeditorFormated',
@@ -3482,9 +3681,17 @@ $dashCount = function ($sql) {
 };
 $dashNewTables = ['sites' => 'siteops', 'topics' => 'sitetopic', 'keywords' => 'keywordmonitorlist', 'articles' => 'article'];
 $dashNewCount = function ($table, $window) {
-    $from = $window === 'week'
-        ? date('Y-m-d H:i:s', time() - 7 * 86400)
-        : ($window === 'month' ? date('Y-m-01 00:00:00') : date('Y-m-d 00:00:00'));
+    // 边界按【显示时区】计算（与 DashboardService::newcomerWindows 一致），再按 UTC 格式化比较存储的 UTC time 串
+    $dashTz = new DateTimeZone(App\Config::displayTimezone());
+    $dashNow = new DateTimeImmutable('now', $dashTz);
+    if ($window === 'week') {
+        $fromTs = time() - 7 * 86400;
+    } elseif ($window === 'month') {
+        $fromTs = $dashNow->modify('first day of this month')->setTime(0, 0, 0)->getTimestamp();
+    } else {
+        $fromTs = $dashNow->setTime(0, 0, 0)->getTimestamp();
+    }
+    $from = gmdate('Y-m-d H:i:s', $fromTs);
     try {
         return count(db("SELECT \"time\" FROM \"" . $table . "\" WHERE \"time\" >= '" . $from . "' AND \"time\" <> ''"));
     } catch (\Throwable $e) {
@@ -3526,6 +3733,30 @@ if (is_array($dashStats)) {
         'dash newcomers stats split per item',
         $dashNewOk,
         implode('; ', $dashNewDetail) ?: json_encode($dashStats['newcomers'] ?? null)
+    );
+    // 当日/本月新增按【显示时区】切日：如上海时区以上海 0 点为一天起点（= UTC 前一日 16:00），而非 UTC 0 点
+    $dashTzSrc = (string)file_get_contents($root . '/app/Services/DashboardService.php');
+    test(
+        'dash newcomers windows use display timezone not utc',
+        strpos($dashTzSrc, 'newcomerWindows') !== false
+            && strpos($dashTzSrc, 'Config::displayTimezone()') !== false
+            && strpos($dashTzSrc, "strtotime(date('Y-m-d 00:00:00'))") === false
+            && strpos($dashTzSrc, "strtotime(date('Y-m-01 00:00:00'))") === false,
+        'newcomers still derives day/month boundaries from UTC date()'
+    );
+    $dashWinRef = new ReflectionMethod('App\Services\DashboardService', 'newcomerWindows');
+    $dashWinRef->setAccessible(true);
+    $dashWin = $dashWinRef->invoke(null);
+    $dashShMid = (new DateTimeImmutable('now', new DateTimeZone('Asia/Shanghai')))->setTime(0, 0, 0);
+    test(
+        'dash today window equals shanghai midnight',
+        ($dashWin['today'] ?? 0) === $dashShMid->getTimestamp() && ($dashWin['month'] ?? 0) === $dashShMid->modify('first day of this month')->setTime(0, 0, 0)->getTimestamp(),
+        json_encode(['today' => $dashWin['today'] ?? 0, 'sh' => $dashShMid->getTimestamp(), 'month' => $dashWin['month'] ?? 0])
+    );
+    test(
+        'dash today window is 16:00 utc for shanghai 0点',
+        gmdate('H:i:s', $dashWin['today'] ?? 0) === '16:00:00',
+        gmdate('Y-m-d H:i:s', $dashWin['today'] ?? 0)
     );
     test(
         'dash trend months aligned',

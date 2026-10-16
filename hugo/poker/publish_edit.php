@@ -90,12 +90,9 @@ try {
         render('error', ['message' => 'JSON 不存在: ' . $eid]);
         return;
     }
-    // 保存名称：优先 savename，为空/缺失时回退到 slug（两者是同一项）
+    // 链接名称（slug）：字段直接绑定 JSON 的 slug，不再回退 savename（savename 保留不动）
     // 兼容 text 为字符串/数组两种形态——原直接 ['text'][0] 在字符串时只取到首字符（value="c"）
-    $savename = ArticleService::textFirst($data['savename'] ?? null);
-    if ($savename === '') {
-        $savename = ArticleService::textFirst($data['slug'] ?? null);
-    }
+    $slugValue = ArticleService::textFirst($data['slug'] ?? null);
     $title = ArticleService::textFirst($data['title'] ?? null);
     if ($title === '' && isset($data['topic'])) {
         $title = (string)$data['topic'];
@@ -116,7 +113,7 @@ try {
         'lang' => $data['lang'] ?? '',
         'series' => $data['series'] ?? '',
         'pubdir' => $data['pubdir'] ?? '',
-        'savename' => $savename,
+        'savename' => $slugValue,
         'pubdomain' => $data['pubdomain'] ?? [],
         'globalpublish' => $data['globalpublish'] ?? 'no',
         'translate_to_langs' => $data['translate_to_langs'] ?? [],

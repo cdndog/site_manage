@@ -110,17 +110,23 @@ class ArticleService
             : []);
         $json['description'] = self::withText($json['description'] ?? null, isset($post['post_description']) ? trim($post['post_description']) : '');
 
-        // 保存名称与 slug 是同一项：字段值同步写入两处
-        $savename = isset($post['post_savename']) ? trim((string)$post['post_savename']) : '';
-        $baseSavename = self::textFirst($base['savename'] ?? null);
-        $baseSlug = self::textFirst($base['slug'] ?? null);
-        $json['savename'] = self::withText($json['savename'] ?? null, $savename);
-        $syncSlug = !isset($base['slug'])
-            || $baseSlug === ''
-            || $baseSlug === $baseSavename
-            || $savename !== $baseSavename;
-        if ($syncSlug && ($savename !== '' || isset($base['slug']))) {
-            $json['slug'] = self::withText($json['slug'] ?? null, $savename);
+        // post_slug：publish_edit（json_edit）模式，字段直接绑定 slug，仅写 slug，不动 savename
+        if (array_key_exists('post_slug', $post)) {
+            $slugVal = trim((string)$post['post_slug']);
+            $json['slug'] = self::withText($json['slug'] ?? null, $slugVal);
+        } else {
+            // 保存名称与 slug 是同一项：字段值同步写入两处（article_new / wechat 导入旧流程）
+            $savename = isset($post['post_savename']) ? trim((string)$post['post_savename']) : '';
+            $baseSavename = self::textFirst($base['savename'] ?? null);
+            $baseSlug = self::textFirst($base['slug'] ?? null);
+            $json['savename'] = self::withText($json['savename'] ?? null, $savename);
+            $syncSlug = !isset($base['slug'])
+                || $baseSlug === ''
+                || $baseSlug === $baseSavename
+                || $savename !== $baseSavename;
+            if ($syncSlug && ($savename !== '' || isset($base['slug']))) {
+                $json['slug'] = self::withText($json['slug'] ?? null, $savename);
+            }
         }
 
         // 发布/翻译开关：表单里没有该字段（JSON 编辑模式已隐藏）时保留原值，提交了才覆盖
