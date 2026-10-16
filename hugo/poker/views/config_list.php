@@ -38,7 +38,7 @@
           </form>
         </div>
       </div>
-      <p class="small text-muted mb-2">业务字典配置存于数据库，部署/密钥类配置保留在 global_config.php；可从配置文件一键导入覆盖。</p>
+      <p class="small text-muted mb-2">业务字典配置存于数据库，部署/密钥类配置保留在 global_config.php；可从配置文件一键导入覆盖。网站历史档的代理 / GitHub 账号 / README 模板 / 上传目录为文件化配置，见 <a href="archive_config.php">历史档配置</a>。</p>
       <table class="table table-hover table-sm">
         <thead>
           <tr>

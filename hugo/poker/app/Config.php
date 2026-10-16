@@ -278,10 +278,12 @@ class Config
                 'title' => '站点管理',
                 'url' => 'siteops.php',
                 'icon' => 'bi-pencil-square',
-                'perm' => 'site.manage',
+                'perm' => 'site.view',
                 'children' => [
                     ['title' => '新建站点', 'url' => 'siteops.php', 'icon' => 'bi-plus-circle', 'perm' => 'site.manage'],
                     ['title' => '站点列表', 'url' => 'seo_report.php?reporttype=sitelist', 'icon' => 'bi-globe', 'perm' => 'site.view'],
+                    ['title' => '网站历史档', 'url' => 'archive.php', 'icon' => 'bi-clock-history', 'perm' => 'site.view'],
+                    ['title' => '历史档配置', 'url' => 'archive_config.php', 'icon' => 'bi-sliders', 'perm' => 'site.manage'],
                 ],
             ],
             [

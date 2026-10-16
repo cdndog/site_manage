@@ -22,4 +22,5 @@ hugo/poker/install.lock
 /hugo/poker/pokerjson
 /hugo/poker/seodata/json
 /hugo/poker/global_config.php
+/hugo/poker/config
 /hugo/poker/uiaigcdatas

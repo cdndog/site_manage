@@ -3863,6 +3863,455 @@ foreach ($ctxFiles as $ctxFile) {
 }
 test('no ctx_id built with date() anywhere', $ctxBad === [], implode(',', $ctxBad));
 
+echo "== 网站历史档（Wayback CDX） ==\n";
+
+// 导航注册：挂在「站点管理」下，viewer/editor 均可见
+$archMods = App\Config::headerModules();
+$archSiteMod = null;
+foreach ($archMods as $archMod) {
+    if (($archMod['title'] ?? '') === '站点管理') {
+        $archSiteMod = $archMod;
+        break;
+    }
+}
+$archChild = null;
+foreach ((isset($archSiteMod['children']) && is_array($archSiteMod['children']) ? $archSiteMod['children'] : []) as $archC) {
+    if (($archC['title'] ?? '') === '网站历史档') {
+        $archChild = $archC;
+        break;
+    }
+}
+test('archive nav child registered under 站点管理', $archChild !== null && $archChild['url'] === 'archive.php' && $archChild['perm'] === 'site.view' && $archChild['icon'] === 'bi-clock-history', var_export($archChild, true));
+test('archive nav parent perm is viewable', (string)($archSiteMod['perm'] ?? '') === 'site.view', var_export(isset($archSiteMod['perm']) ? $archSiteMod['perm'] : null, true));
+$archHasChild = function ($perms) {
+    foreach (App\Config::headerModulesFor($perms) as $m) {
+        foreach ((isset($m['children']) && is_array($m['children']) ? $m['children'] : []) as $c) {
+            if (($c['title'] ?? '') === '网站历史档') {
+                return true;
+            }
+        }
+    }
+    return false;
+};
+test('archive menu visible to viewer', $archHasChild(['site.view']) === true);
+test('archive menu visible to editor', $archHasChild(['site.view', 'site.manage']) === true);
+test('archive menu hidden without site.view', $archHasChild(['keyword.view']) === false);
+
+// CDX 响应解析
+$cdxFixture = json_encode([
+    ['urlkey', 'timestamp', 'original', 'mimetype', 'statuscode', 'digest', 'length'],
+    ['com,example)/', '20210102030405', 'http://example.com/', 'text/html', '200', 'ABC', '12345'],
+    ['com,example)/about', '20220506070809', 'https://example.com/about', 'text/html', '301', 'DEF', '999'],
+]);
+$cdxParsed = App\Services\WaybackService::parseCdx($cdxFixture);
+test('cdx parse maps columns to rows', count($cdxParsed) === 2 && $cdxParsed[0]['timestamp'] === '20210102030405' && $cdxParsed[0]['statuscode'] === '200' && $cdxParsed[0]['length'] === '12345' && $cdxParsed[1]['original'] === 'https://example.com/about', var_export($cdxParsed, true));
+test('cdx parse empty body', App\Services\WaybackService::parseCdx('') === []);
+test('cdx parse invalid json', App\Services\WaybackService::parseCdx('not json') === []);
+test('cdx parse header-only body', App\Services\WaybackService::parseCdx('[["a","b"]]') === []);
+
+test('wayback snapshot url uses id_ replay form', App\Services\WaybackService::snapshotUrl('20210102030405', 'http://example.com/') === 'https://web.archive.org/web/20210102030405id_/http://example.com/');
+test('wayback snapshot url empty guards', App\Services\WaybackService::snapshotUrl('', 'x') === '' && App\Services\WaybackService::snapshotUrl('2021', '') === '');
+test('wayback timestamp renders in display timezone', App\Services\WaybackService::formatTimestamp('20210102120000') === '2021-01-02 20:00:00', App\Services\WaybackService::formatTimestamp('20210102120000'));
+test('wayback timestamp passthrough non-14-digit', App\Services\WaybackService::formatTimestamp('2021') === '2021');
+test('wayback length humanize', App\Services\WaybackService::formatLength(0) === '-' && App\Services\WaybackService::formatLength(1536) === '1.5 KB' && App\Services\WaybackService::formatLength(2097152) === '2 MB', App\Services\WaybackService::formatLength(2097152));
+
+// 离线 stub 注入下的查询链路（不走网络）
+$GLOBALS['__waybackHttpStub'] = [
+    'https://web.archive.org/cdx/search/cdx?url=example.com&matchType=domain&fl=' => $cdxFixture,
+    'https://web.archive.org/cdx/search/cdx?url=example.com&matchType=domain&showNumPages' => "3\n",
+];
+$archQ = App\Services\WaybackService::cdxQuery('example.com', 50);
+test('cdxQuery stub returns parsed rows', $archQ['ok'] === true && count($archQ['rows']) === 2 && $archQ['error'] === '', var_export($archQ, true));
+$archQEmpty = App\Services\WaybackService::cdxQuery('   ');
+test('cdxQuery rejects empty domain', $archQEmpty['ok'] === false && $archQEmpty['rows'] === [], var_export($archQEmpty, true));
+$archPages = App\Services\WaybackService::numPages('example.com');
+test('numPages stub returns page count', $archPages['ok'] === true && $archPages['pages'] === 3, var_export($archPages, true));
+unset($GLOBALS['__waybackHttpStub']);
+
+// 页面渲染（viewer 会话）
+putenv('APP_AUTH_SECRET=rbacsecret');
+App\Support\Security::reset();
+$archUser = App\Repositories\UserRepository::create([
+    'username' => 'archviewer',
+    'password_hash' => password_hash('pass1234', PASSWORD_DEFAULT),
+    'display_name' => 'Archive Viewer',
+    'status' => 'active',
+]);
+$archViewerRole = db("SELECT id FROM roles WHERE name='viewer'");
+App\Repositories\UserRepository::setRoles($archUser, [(int)$archViewerRole[0]['id']]);
+$archExp = time() + 3600;
+$archMac = substr(hash_hmac('sha256', 'auth|archviewer|' . $archExp, 'rbacsecret'), 0, 32);
+$archCookie = 'archviewer|' . $archExp . '|' . $archMac;
+$archEntryCookie = ['siteops_uid' => 'archv1', 'siteops_auth' => $archCookie];
+
+unset($_SERVER['HTTP_ORIGIN']);
+$html = runRequest([], [], 'GET', ['siteops_uid' => 'archv1'], '/archive.php');
+test('archive page requires login', strpos($html, '网站历史档') === false && (strpos($html, 'name="login_action"') !== false || strpos($html, '"code":401') !== false), substr($html, 0, 120));
+
+// 导航：历史档配置仅 site.manage 可见
+$cfgHasChild = function ($perms) {
+    foreach (App\Config::headerModulesFor($perms) as $m) {
+        foreach ((isset($m['children']) && is_array($m['children']) ? $m['children'] : []) as $c) {
+            if (($c['title'] ?? '') === '历史档配置') {
+                return true;
+            }
+        }
+    }
+    return false;
+};
+test('archive config nav hidden for viewer', $cfgHasChild(['site.view']) === false);
+test('archive config nav visible for editor', $cfgHasChild(['site.view', 'site.manage']) === true);
+
+// GET 页面骨架：四步表单 + 结果容器（查询结果经 AJAX，GET 不联网）
+$html = runRequest([], [], 'GET', $archEntryCookie, '/archive.php');
+test('archive page renders for viewer', strpos($html, '网站历史档') !== false && strpos($html, 'name="login_action"') === false, substr($html, 0, 160));
+test('archive page shows step skeleton', strpos($html, '查询 Archive 历史名称') !== false && strpos($html, '归档基线') !== false && strpos($html, '创建 GitHub 私有仓库') !== false && strpos($html, 'id="archiveResults"') !== false, substr($html, (int)strpos($html, 'step-num'), 200));
+test('archive page query form wired for ajax', strpos($html, 'id="form-check"') !== false && strpos($html, 'id="domain"') !== false && strpos($html, 'name="action" value="check"') !== false, substr($html, (int)strpos($html, 'id="form-check"'), 300));
+test('archive page proxy preset dropdown from file config', strpos($html, 'id="proxy_preset"') !== false && strpos($html, 'Clash 本地（HTTP）') !== false && strpos($html, '手工录入…') !== false, substr($html, (int)strpos($html, 'id="proxy_preset"'), 300));
+test('archive page baseline empty before selection', strpos($html, 'id="baselineContent"') !== false && strpos($html, 'display:none') !== false && strpos($html, 'id="baselineHint"') !== false, substr($html, (int)strpos($html, 'id="baselineContent"'), 200));
+
+// 步骤1：AJAX 查询（CDX 三元组 + 并发标题），结果表以 JSON 返回
+$checkFixture = json_encode([
+    ['timestamp', 'original', 'statuscode'],
+    ['20210102030405', 'http://example.com/', '200'],
+    ['20220304050607', 'http://example.com/', '200'],
+    ['20220506070809', 'https://example.com/about', '200'],
+]);
+$titlePage = '<html><head><meta charset="utf-8"><title>Example Site</title></head><body>' . str_repeat('<p>archive snapshot body</p>', 8) . '</body></html>';
+$GLOBALS['__waybackHttpStub'] = [
+    'https://web.archive.org/cdx/search/cdx?url=example.com&matchType=domain&limit=150000' => $checkFixture,
+    'https://web.archive.org/web/' => $titlePage,
+];
+$archCheckJson = runRequest([], ['action' => 'check', 'domain' => 'example.com', 'csrf_token' => 'x', 'proxy_preset' => '', 'homepage_only' => '1'], 'POST', [], '/archive.php');
+$archCheck = json_decode($archCheckJson, true);
+$archCheckHtml = is_array($archCheck) && isset($archCheck['html']) ? (string)$archCheck['html'] : '';
+test('archive check returns result table json', is_array($archCheck) && !empty($archCheck['ok']) && (int)($archCheck['count'] ?? 0) === 2 && strpos($archCheckHtml, 'archive-baseline-radio') !== false, substr($archCheckJson, 0, 300));
+$archExpTime = App\Services\WaybackService::formatTimestamp('20210102030405');
+test('archive check rows show formatted time and title', strpos($archCheckHtml, $archExpTime) !== false && strpos($archCheckHtml, 'Example Site') !== false, substr($archCheckHtml, 0, 300));
+test('archive check replay link keeps wayback toolbar', strpos($archCheckHtml, 'https://web.archive.org/web/20210102030405/http://example.com/') !== false && strpos($archCheckHtml, 'id_/http://example.com/') === false, substr($archCheckHtml, 0, 300));
+test('archive check skips non-homepage paths', strpos($archCheckHtml, '/about') === false, $archCheckHtml);
+test('archive check offers baseline selection', strpos($archCheckHtml, '选择为基线') !== false && strpos($archCheckHtml, 'data-url=') !== false);
+test('archive check carries baseline hidden payload', strpos($archCheckHtml, 'data-title="Example Site"') !== false && strpos($archCheckHtml, 'data-domain="example.com"') !== false, substr($archCheckHtml, 0, 300));
+
+// 步骤1 空态 / 错误态 / 输入净化
+$GLOBALS['__waybackHttpStub'] = ['https://web.archive.org/cdx/search/cdx?url=empty.com' => '[["timestamp","original","statuscode"]]'];
+$archEmpty = json_decode(runRequest([], ['action' => 'check', 'domain' => 'empty.com', 'csrf_token' => 'x'], 'POST', [], '/archive.php'), true);
+test('archive check empty state', is_array($archEmpty) && !empty($archEmpty['ok']) && (int)($archEmpty['count'] ?? -1) === 0 && strpos((string)($archEmpty['html'] ?? ''), '未找到') !== false, json_encode($archEmpty, JSON_UNESCAPED_UNICODE));
+
+$GLOBALS['__waybackHttpStub'] = [];
+$archErr = json_decode(runRequest([], ['action' => 'check', 'domain' => 'none.com', 'csrf_token' => 'x'], 'POST', [], '/archive.php'), true);
+test('archive check error state', is_array($archErr) && empty($archErr['ok']) && strpos((string)($archErr['error'] ?? ''), 'stub 未覆盖') !== false, json_encode($archErr, JSON_UNESCAPED_UNICODE));
+
+$archDirty = json_decode(runRequest([], ['action' => 'check', 'domain' => 'exa<script>mple', 'csrf_token' => 'x'], 'POST', [], '/archive.php'), true);
+test('archive check sanitizes domain input', is_array($archDirty) && strpos((string)($archDirty['error'] ?? ''), 'url=exascriptmple') !== false && strpos((string)($archDirty['error'] ?? ''), '<script>') === false, json_encode($archDirty, JSON_UNESCAPED_UNICODE));
+
+// CSRF：viewer 会话下无效 token 被拒、有效 token 放行
+$GLOBALS['__waybackHttpStub'] = [
+    'https://web.archive.org/cdx/search/cdx?url=example.com&matchType=domain&limit=150000' => $checkFixture,
+    'https://web.archive.org/web/' => $titlePage,
+];
+$archCsrf = substr(hash_hmac('sha256', 'csrf|archv1', App\Config::csrfSecret()), 0, 32);
+$archBadCsrf = json_decode(runRequest([], ['action' => 'check', 'domain' => 'example.com', 'csrf_token' => 'x'], 'POST', $archEntryCookie, '/archive.php'), true);
+test('archive check rejects invalid csrf', is_array($archBadCsrf) && empty($archBadCsrf['ok']) && strpos((string)($archBadCsrf['error'] ?? ''), 'CSRF') !== false, json_encode($archBadCsrf, JSON_UNESCAPED_UNICODE));
+$archGoodCsrf = json_decode(runRequest([], ['action' => 'check', 'domain' => 'example.com', 'csrf_token' => $archCsrf, 'proxy_preset' => '', 'homepage_only' => '1'], 'POST', $archEntryCookie, '/archive.php'), true);
+test('archive check accepts valid csrf', is_array($archGoodCsrf) && !empty($archGoodCsrf['ok']) && (int)($archGoodCsrf['count'] ?? 0) === 2, json_encode($archGoodCsrf, JSON_UNESCAPED_UNICODE));
+unset($GLOBALS['__waybackHttpStub']);
+
+// 步骤1 测试代理（整页）
+$GLOBALS['__waybackHttpStub'] = ['https://web.archive.org/cdx/search/cdx?url=archive.org&limit=1' => '[["timestamp","original"]]'];
+$archProxyHtml = runRequest([], ['action' => 'proxy_test', 'proxy_preset' => '__manual__', 'proxy_addr' => 'http://127.0.0.1:7890', 'csrf_token' => 'x'], 'POST', [], '/archive.php');
+test('archive proxy test reports success', strpos($archProxyHtml, '可用') !== false && strpos($archProxyHtml, '耗时') !== false && strpos($archProxyHtml, '127.0.0.1:7890') !== false, substr($archProxyHtml, (int)strpos($archProxyHtml, 'alert-success'), 260));
+$archProxyEmpty = runRequest([], ['action' => 'proxy_test', 'proxy_preset' => '', 'csrf_token' => 'x'], 'POST', [], '/archive.php');
+test('archive proxy test requires address', strpos($archProxyEmpty, '请先选择或录入代理地址') !== false, substr($archProxyEmpty, (int)strpos($archProxyEmpty, 'alert-danger'), 200));
+unset($GLOBALS['__waybackHttpStub']);
+
+// 步骤3 预览（AJAX）：占位符替换 + GitHub 地址
+$archPv = json_decode(runRequest([], [
+    'action' => 'preview', 'repo_name' => 'example-restore', 'username' => 'octo',
+    'archive_ts' => '20210102030405', 'archive_url' => 'http://example.com/',
+    'archive_domain' => 'example.com', 'site_name' => '示例站点', 'template_id' => '', 'csrf_token' => 'x',
+], 'POST', [], '/archive.php'), true);
+test('archive preview substitutes placeholders', is_array($archPv) && !empty($archPv['ok'])
+    && strpos((string)($archPv['github_url'] ?? ''), 'https://github.com/octo/example-restore') !== false
+    && strpos((string)($archPv['readme'] ?? ''), '示例站点') !== false
+    && strpos((string)($archPv['readme'] ?? ''), '20210102030405') !== false
+    && strpos((string)($archPv['readme'] ?? ''), '{{') === false, json_encode($archPv, JSON_UNESCAPED_UNICODE));
+$archPvNoBase = json_decode(runRequest([], [
+    'action' => 'preview', 'repo_name' => 'x', 'archive_ts' => '', 'archive_url' => '', 'csrf_token' => 'x',
+], 'POST', [], '/archive.php'), true);
+test('archive preview requires baseline', is_array($archPvNoBase) && empty($archPvNoBase['ok']) && strpos((string)($archPvNoBase['error'] ?? ''), '归档基线') !== false, json_encode($archPvNoBase, JSON_UNESCAPED_UNICODE));
+
+// 超时兜底：控制器放开 PHP 执行时间上限（避免 archive.org 缓慢时 30s fatal），curl 超时有界
+$archCtrlSrc = (string)file_get_contents($root . '/app/Controllers/ArchiveController.php');
+test('archive controller lifts php time limit', strpos($archCtrlSrc, 'set_time_limit(0)') !== false && strpos($archCtrlSrc, "ini_set('max_execution_time'") !== false);
+$archSvcSrc = (string)file_get_contents($root . '/app/Services/WaybackService.php');
+test('wayback service uses bounded curl timeouts', strpos($archSvcSrc, 'const TIMEOUT = 15') !== false && strpos($archSvcSrc, 'const PAGES_TIMEOUT = 10') !== false && strpos($archSvcSrc, 'CURLOPT_CONNECTTIMEOUT => min(10') !== false && strpos($archSvcSrc, 'const SNAPSHOTS_TIMEOUT = 45') !== false);
+
+// Wayback 代理：环境变量链（DB 配置已迁移到文件化的「历史档配置」代理预设）
+// 注意：测试 shell 可能预设 http_proxy/https_proxy，先清空全部代理 env 再断言默认为空
+$archProxyEnv = ['WAYBACK_PROXY', 'APP_WAYBACK_PROXY', 'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'];
+foreach ($archProxyEnv as $archProxyVar) {
+    putenv($archProxyVar);
+}
+test('wayback proxy empty with no env', App\Services\WaybackService::proxy() === '', App\Services\WaybackService::proxy());
+putenv('WAYBACK_PROXY=http://127.0.0.1:9999');
+App\Config::reset();
+test('wayback proxy falls back to env', App\Services\WaybackService::proxy() === 'http://127.0.0.1:9999', App\Services\WaybackService::proxy());
+putenv('WAYBACK_PROXY');
+
+// 【步骤3】创建 GitHub 私有仓库（GitHub API 离线 stub）：创建私有仓库 + 写入 README + 记录落盘
+// 默认上传目录指向项目根 upload/（真实文件），测试前显式置空避免误传项目文件
+App\Services\ArchiveConfigService::saveUploads(['base' => '', 'upload_dirs' => []]);
+$GLOBALS['__githubApiStub'] = [
+    'POST https://api.github.com/user/repos' => ['code' => 201, 'body' => ['owner' => ['login' => 'octo'], 'name' => 'example-restore', 'html_url' => 'https://github.com/octo/example-restore']],
+    'PUT https://api.github.com/repos/octo/example-restore/contents/README.md' => ['code' => 200, 'body' => ['content' => ['html_url' => 'https://github.com/octo/example-restore/blob/main/README.md']]],
+];
+$archCreatePost = [
+    'action' => 'create', 'username' => 'octo', 'token' => 'ghp_' . str_repeat('a', 20),
+    'repo_name' => 'example-restore', 'site_name' => '示例站点',
+    'archive_ts' => '20210102030405', 'archive_url' => 'http://example.com/',
+    'archive_domain' => 'example.com', 'template_id' => '', 'csrf_token' => 'x',
+];
+$archCreateHtml = runRequest([], $archCreatePost, 'POST', [], '/archive.php');
+test('archive create makes private repo and readme', strpos($archCreateHtml, '仓库创建成功') !== false && strpos($archCreateHtml, 'https://github.com/octo/example-restore') !== false && strpos($archCreateHtml, 'README 已写入') !== false, substr($archCreateHtml, (int)strpos($archCreateHtml, 'alert-success'), 400));
+$archRepos = App\Services\ArchiveConfigService::repos();
+test('archive create records repo in file config', count($archRepos) === 1 && (string)($archRepos[0]['repo'] ?? '') === 'example-restore' && (string)($archRepos[0]['archive_ts'] ?? '') === '20210102030405' && is_file(App\Services\ArchiveConfigService::dir() . '/created_repos.json'), json_encode($archRepos, JSON_UNESCAPED_UNICODE));
+
+// 创建后 GET：步骤4 已创建仓库列表
+$html = runRequest([], [], 'GET', $archEntryCookie, '/archive.php');
+test('archive page lists created repo step4', strpos($html, '已创建仓库') !== false && strpos($html, 'https://github.com/octo/example-restore') !== false, substr($html, (int)strpos($html, '已创建仓库'), 300));
+
+// 创建校验分支：Token 格式 / 归档基线缺失（均不发起 GitHub 请求）
+$archBadTok = runRequest([], ['action' => 'create', 'username' => 'octo', 'token' => 'not-a-token', 'repo_name' => 'x', 'archive_ts' => '20210102030405', 'archive_url' => 'http://example.com/', 'archive_domain' => 'example.com', 'csrf_token' => 'x'], 'POST', [], '/archive.php');
+test('archive create validates token format', strpos($archBadTok, 'GitHub Token 格式不正确') !== false, substr($archBadTok, (int)strpos($archBadTok, 'alert-danger'), 260));
+$archNoBase = runRequest([], ['action' => 'create', 'username' => 'octo', 'token' => 'ghp_' . str_repeat('b', 20), 'repo_name' => 'x', 'archive_ts' => '', 'archive_url' => '', 'csrf_token' => 'x'], 'POST', [], '/archive.php');
+test('archive create requires baseline', strpos($archNoBase, '请先选择归档基线') !== false, substr($archNoBase, (int)strpos($archNoBase, 'alert-danger'), 260));
+$archViewerCreate = runRequest([], $archCreatePost, 'POST', $archEntryCookie, '/archive.php');
+test('archive create denied for viewer', strpos($archViewerCreate, 'forbidden: insufficient permission') !== false, substr($archViewerCreate, 0, 200));
+unset($GLOBALS['__githubApiStub']);
+
+// 文件化配置 ArchiveConfigService：默认值 / CRUD / 防路径穿越（不入数据库）
+$archCfgDir = App\Services\ArchiveConfigService::dir();
+$archDefProxies = App\Services\ArchiveConfigService::proxies();
+test('archive config proxy defaults when file missing', count($archDefProxies) >= 1 && (string)($archDefProxies[0]['id'] ?? '') === 'clash-local' && App\Services\ArchiveConfigService::proxyById('clash-local') === 'http://127.0.0.1:7890', json_encode($archDefProxies, JSON_UNESCAPED_UNICODE));
+test('archive config unknown ids resolve empty', App\Services\ArchiveConfigService::proxyById('nope') === '' && App\Services\ArchiveConfigService::accountById('nope') === null && App\Services\ArchiveConfigService::templateById('nope') === null);
+
+// 默认结构对齐 wbm/config：accounts（wpkcdn/cdndog 空 token）、templates（2 个、lite-restore 默认）、uploads（base=upload + scripts/static）
+$archDefAcc = App\Services\ArchiveConfigService::defaults('accounts');
+$archDefTpl = App\Services\ArchiveConfigService::defaults('templates');
+$archDefUp = App\Services\ArchiveConfigService::defaults('uploads');
+test('archive config defaults match wbm config', count($archDefAcc) === 2 && (string)($archDefAcc[0]['id'] ?? '') === 'wpkcdn' && (string)($archDefAcc[1]['id'] ?? '') === 'cdndog' && (string)($archDefAcc[0]['token'] ?? '') === ''
+    && count($archDefTpl) === 2 && (string)($archDefTpl[1]['id'] ?? '') === 'waybackmachine-lite-restore' && !empty($archDefTpl[1]['default'])
+    && (string)($archDefUp['base'] ?? '') === 'upload' && count((array)($archDefUp['upload_dirs'] ?? [])) === 2, json_encode($archDefUp, JSON_UNESCAPED_UNICODE));
+
+// 文件布局对齐 wbm：JSON 在 config/，模板在项目根 templates/*.md（随项目提交的真实模板），上传根项目根 upload/
+test('archive config file layout mirrors wbm', basename(App\Services\ArchiveConfigService::dir()) === 'config'
+    && basename(App\Services\ArchiveConfigService::templatesDir()) === 'templates'
+    && basename(App\Services\ArchiveConfigService::uploadsBaseDir()) === 'upload'
+    && is_file(App\Services\ArchiveConfigService::templatesDir() . '/waybackmachine-lite-restore.md')
+    && is_file(App\Services\ArchiveConfigService::templatesDir() . '/waybackmachine-site.md')
+    && strpos(App\Services\ArchiveConfigService::templateContent('waybackmachine-lite-restore.md'), '{{SITE_NAME}}') !== false, App\Services\ArchiveConfigService::dir());
+
+// 原始 JSON 编辑器数据源（缺文件时按默认结构补齐，缺 kind 返回空）
+test('archive config raw json mirrors structure', strpos(App\Services\ArchiveConfigService::rawJson('proxy'), '"proxies"') !== false
+    && strpos(App\Services\ArchiveConfigService::rawJson('accounts'), '"accounts"') !== false
+    && strpos(App\Services\ArchiveConfigService::rawJson('templates'), '"waybackmachine-lite-restore"') !== false
+    && strpos(App\Services\ArchiveConfigService::rawJson('uploads'), '"upload_dirs"') !== false
+    && App\Services\ArchiveConfigService::rawJson('unknown') === '', App\Services\ArchiveConfigService::rawJson('proxy'));
+
+App\Services\ArchiveConfigService::saveProxies([['id' => 'test-proxy', 'name' => 'Test Proxy', 'url' => 'socks5h://127.0.0.1:1080']]);
+test('archive config proxies roundtrip', count(App\Services\ArchiveConfigService::proxies()) === 1 && App\Services\ArchiveConfigService::proxyById('test-proxy') === 'socks5h://127.0.0.1:1080' && is_file($archCfgDir . '/proxy.json'), (string)@file_get_contents($archCfgDir . '/proxy.json'));
+
+App\Services\ArchiveConfigService::saveAccounts([['id' => 'acc1', 'name' => 'Main', 'username' => 'octo', 'token' => 'ghp_' . str_repeat('c', 20)]]);
+$archAcc = App\Services\ArchiveConfigService::accountById('acc1');
+test('archive config accounts roundtrip', is_array($archAcc) && (string)($archAcc['username'] ?? '') === 'octo' && is_file($archCfgDir . '/accounts.json'), json_encode($archAcc, JSON_UNESCAPED_UNICODE));
+
+App\Services\ArchiveConfigService::saveTemplates([['id' => 'my-template', 'name' => 'My Template', 'file' => 'my-template.md', 'default' => true]]);
+App\Services\ArchiveConfigService::saveTemplateContent('my-template.md', "# {{SITE_NAME}} restored\n");
+test('archive config template body roundtrip', strpos(App\Services\ArchiveConfigService::templateContent('my-template.md'), '{{SITE_NAME}}') !== false && strpos(App\Services\ArchiveConfigService::templateContent('missing.md'), '{{ARCHIVE_DOMAIN}}') !== false, App\Services\ArchiveConfigService::templateContent('my-template.md'));
+test('archive config safe file name blocks traversal', App\Services\ArchiveConfigService::safeFileName('../../etc/passwd') === 'passwd' && App\Services\ArchiveConfigService::safeFileName('..') === '' && App\Services\ArchiveConfigService::safeFileName('my template?.md') === 'mytemplate.md', App\Services\ArchiveConfigService::safeFileName('..'));
+
+@mkdir($GLOBALS['dataDir'] . '/archive_up_test/scripts', 0777, true);
+file_put_contents($GLOBALS['dataDir'] . '/archive_up_test/scripts/run.js', "console.log('up');\n");
+App\Services\ArchiveConfigService::saveUploads(['base' => '', 'upload_dirs' => [['id' => 'scripts', 'label' => 'Scripts', 'path' => 'archive_up_test/scripts', 'repo_prefix' => 'scripts']]]);
+$archUpDirs = App\Services\GitHubService::repoUploadDirs();
+test('archive config uploads roundtrip and resolve', isset($archUpDirs['Scripts']) && (string)$archUpDirs['Scripts']['prefix'] === 'scripts' && is_dir((string)$archUpDirs['Scripts']['abs']), json_encode($archUpDirs, JSON_UNESCAPED_UNICODE));
+
+// 【历史档配置】页：viewer 被拒 / editor 渲染 / 保存与删除写入文件
+$cfgViewerHtml = runRequest([], [], 'GET', $archEntryCookie, '/archive_config.php');
+test('archive config page denied for viewer', strpos($cfgViewerHtml, 'forbidden: insufficient permission') !== false, substr($cfgViewerHtml, 0, 200));
+
+$archEditorRole = db("SELECT id FROM roles WHERE name='editor'");
+$archEditor = App\Repositories\UserRepository::create([
+    'username' => 'archeditor',
+    'password_hash' => password_hash('pass1234', PASSWORD_DEFAULT),
+    'display_name' => 'Archive Editor',
+    'status' => 'active',
+]);
+App\Repositories\UserRepository::setRoles($archEditor, [(int)$archEditorRole[0]['id']]);
+$archEditorMac = substr(hash_hmac('sha256', 'auth|archeditor|' . $archExp, 'rbacsecret'), 0, 32);
+$archEditorCookie = ['siteops_uid' => 'arche1', 'siteops_auth' => 'archeditor|' . $archExp . '|' . $archEditorMac];
+$archCfgCsrf = substr(hash_hmac('sha256', 'csrf|arche1', App\Config::csrfSecret()), 0, 32);
+
+$cfgEditorHtml = runRequest([], [], 'GET', $archEditorCookie, '/archive_config.php');
+test('archive config page renders for editor', strpos($cfgEditorHtml, '历史档配置') !== false && strpos($cfgEditorHtml, 'section-proxies') !== false && strpos($cfgEditorHtml, 'section-accounts') !== false && strpos($cfgEditorHtml, 'section-templates') !== false && strpos($cfgEditorHtml, 'section-uploads') !== false && strpos($cfgEditorHtml, 'section-raw') !== false, substr($cfgEditorHtml, 0, 200));
+
+$cfgSave = runRequest([], ['action' => 'save-item', 'section' => 'proxies', 'item_id' => '', 'name' => 'Test Proxy 2', 'url' => 'http://127.0.0.1:9999', 'csrf_token' => $archCfgCsrf], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config saves proxy to file', strpos($cfgSave, '代理已新增：Test Proxy 2') !== false && strpos((string)@file_get_contents($archCfgDir . '/proxy.json'), '127.0.0.1:9999') !== false, substr($cfgSave, (int)strpos($cfgSave, 'alert-success'), 300));
+
+$cfgBadUrl = runRequest([], ['action' => 'save-item', 'section' => 'proxies', 'name' => 'Bad', 'url' => 'ftp://bad', 'csrf_token' => $archCfgCsrf], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config rejects bad proxy url', strpos($cfgBadUrl, '代理地址需形如') !== false && strpos((string)@file_get_contents($archCfgDir . '/proxy.json'), 'ftp://bad') === false, substr($cfgBadUrl, (int)strpos($cfgBadUrl, 'alert-danger'), 300));
+
+$cfgDel = runRequest([], ['action' => 'delete-item', 'section' => 'proxies', 'item_id' => 'test-proxy-2', 'csrf_token' => $archCfgCsrf], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config deletes proxy from file', strpos($cfgDel, '已删除配置项：test-proxy-2') !== false && strpos((string)@file_get_contents($archCfgDir . '/proxy.json'), 'test-proxy-2') === false, substr($cfgDel, (int)strpos($cfgDel, 'alert-success'), 300));
+
+$cfgAcc = runRequest([], ['action' => 'save-item', 'section' => 'accounts', 'item_id' => '', 'name' => 'Main', 'username' => 'octo', 'token' => 'ghp_' . str_repeat('c', 20), 'csrf_token' => $archCfgCsrf], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config saves account to file', strpos($cfgAcc, '账号已新增：Main') !== false && (string)(App\Services\ArchiveConfigService::accountById('main')['username'] ?? '') === 'octo', substr($cfgAcc, (int)strpos($cfgAcc, 'alert-success'), 300));
+
+$cfgContent = runRequest([], ['action' => 'save-content', 'item_id' => 'my-template', 'content' => "# 归档 {{ARCHIVE_DATE}}\n", 'csrf_token' => $archCfgCsrf], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config saves template body to md', strpos($cfgContent, '模板正文已保存') !== false && strpos((string)@file_get_contents(App\Services\ArchiveConfigService::templatesDir() . '/my-template.md'), '归档 {{ARCHIVE_DATE}}') !== false, substr($cfgContent, (int)strpos($cfgContent, 'alert-success'), 300));
+
+$cfgBase = runRequest([], ['action' => 'save-base', 'base' => 'archive_up_test', 'csrf_token' => $archCfgCsrf], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config saves upload base', strpos($cfgBase, '上传根目录已保存') !== false && (string)(App\Services\ArchiveConfigService::uploads()['base'] ?? '') === 'archive_up_test', substr($cfgBase, (int)strpos($cfgBase, 'alert-success'), 300));
+
+// 原始 JSON 编辑（?raw=<kind> 展示 + action=save-json 整文件覆盖写入，结构不符/非法 JSON 拒绝）
+$cfgRawPage = runRequest(['raw' => 'accounts'], [], 'GET', $archEditorCookie, '/archive_config.php');
+test('archive config raw json page', strpos($cfgRawPage, 'section-raw') !== false && strpos($cfgRawPage, 'name="kind" value="accounts"') !== false && strpos($cfgRawPage, '&quot;accounts&quot;') !== false, substr($cfgRawPage, (int)strpos($cfgRawPage, 'section-raw'), 300));
+
+$cfgJsonOk = runRequest([], ['action' => 'save-json', 'kind' => 'proxy', 'csrf_token' => $archCfgCsrf,
+    'json' => '{"proxies":[{"id":"paste-proxy","name":"Paste","url":"socks5h://127.0.0.1:1081"}],"api_token":"tok-keep","extra_key":1}'], 'POST', $archEditorCookie, '/archive_config.php');
+$cfgProxyRawFile = $archCfgDir . '/proxy.json';
+$cfgProxyRaw = (string)@file_get_contents($cfgProxyRawFile);
+test('archive config saves raw json', strpos($cfgJsonOk, '已保存原始 JSON：proxy.json') !== false && strpos($cfgProxyRaw, 'paste-proxy') !== false && strpos($cfgProxyRaw, 'tok-keep') !== false && strpos($cfgProxyRaw, 'extra_key') !== false, substr($cfgJsonOk, (int)strpos($cfgJsonOk, 'alert-'), 300));
+test('archive config raw json roundtrip via service', (string)(App\Services\ArchiveConfigService::loadJson('proxy.json')['api_token'] ?? '') === 'tok-keep' && App\Services\ArchiveConfigService::proxyById('paste-proxy') === 'socks5h://127.0.0.1:1081', $cfgProxyRaw);
+
+$cfgJsonBad = runRequest([], ['action' => 'save-json', 'kind' => 'proxy', 'csrf_token' => $archCfgCsrf, 'json' => '{oops'], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config rejects invalid raw json', strpos($cfgJsonBad, 'JSON 格式错误') !== false && strpos((string)@file_get_contents($cfgProxyRawFile), 'paste-proxy') !== false, substr($cfgJsonBad, (int)strpos($cfgJsonBad, 'alert-danger'), 300));
+
+$cfgJsonKey = runRequest([], ['action' => 'save-json', 'kind' => 'proxy', 'csrf_token' => $archCfgCsrf, 'json' => '{"other":[]}'], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config rejects raw json missing key', strpos($cfgJsonKey, '顶层需包含数组键 &quot;proxies&quot;') !== false && strpos((string)@file_get_contents($cfgProxyRawFile), 'paste-proxy') !== false, substr($cfgJsonKey, (int)strpos($cfgJsonKey, 'alert-danger'), 300));
+
+$cfgJsonKind = runRequest([], ['action' => 'save-json', 'kind' => 'evil', 'csrf_token' => $archCfgCsrf, 'json' => '{"a":[]}'], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config rejects unknown json kind', strpos($cfgJsonKind, '未知配置文件：evil') !== false && !is_file($archCfgDir . '/evil.json'), substr($cfgJsonKind, (int)strpos($cfgJsonKind, 'alert-danger'), 200));
+
+$cfgJsonTrav = runRequest([], ['action' => 'save-json', 'kind' => 'uploads', 'csrf_token' => $archCfgCsrf,
+    'json' => '{"base":"upload","upload_dirs":[{"id":"x","label":"X","path":"../../etc","repo_prefix":"x"}]}'], 'POST', $archEditorCookie, '/archive_config.php');
+test('archive config rejects raw json upload traversal', strpos($cfgJsonTrav, '不得包含 ..') !== false, substr($cfgJsonTrav, (int)strpos($cfgJsonTrav, 'alert-danger'), 260));
+
+// 历史档页下拉读取文件化账号（选择后自动填入用户名与 Token）
+$archPageAccounts = runRequest([], [], 'GET', $archEntryCookie, '/archive.php');
+test('archive page lists file-based accounts', strpos($archPageAccounts, 'data-username="octo"') !== false, substr($archPageAccounts, (int)strpos($archPageAccounts, 'id="account_id"'), 400));
+
+// 创建仓库时递归上传本地目录（GitHub API stub 覆盖 README 与文件 PUT）
+$GLOBALS['__githubApiStub'] = [
+    'POST https://api.github.com/user/repos' => ['code' => 201, 'body' => ['owner' => ['login' => 'octo'], 'name' => 'upload-repo', 'html_url' => 'https://github.com/octo/upload-repo']],
+    'PUT https://api.github.com/repos/octo/upload-repo/contents/README.md' => ['code' => 200, 'body' => ['content' => ['html_url' => 'https://github.com/octo/upload-repo/blob/main/README.md']]],
+    'PUT https://api.github.com/repos/octo/upload-repo/contents/scripts/' => ['code' => 200, 'body' => ['content' => ['html_url' => 'https://github.com/octo/upload-repo/blob/main/scripts/run.js']]],
+];
+$upHtml = runRequest([], [
+    'action' => 'create', 'username' => 'octo', 'token' => 'ghp_' . str_repeat('d', 20),
+    'repo_name' => 'upload-repo', 'site_name' => '示例站点',
+    'archive_ts' => '20210102030405', 'archive_url' => 'http://example.com/',
+    'archive_domain' => 'example.com', 'csrf_token' => $archCfgCsrf,
+], 'POST', $archEditorCookie, '/archive.php');
+test('archive create uploads local dirs to repo', strpos($upHtml, '仓库创建成功') !== false && strpos($upHtml, '全部上传成功') !== false && strpos($upHtml, 'scripts/') !== false, substr($upHtml, (int)strpos($upHtml, 'alert-success'), 500));
+$repos2 = App\Services\ArchiveConfigService::repos();
+test('archive create second repo recorded with editor', count($repos2) === 2 && (string)($repos2[0]['repo'] ?? '') === 'upload-repo' && (string)($repos2[0]['created_by'] ?? '') === 'archeditor', json_encode($repos2, JSON_UNESCAPED_UNICODE));
+unset($GLOBALS['__githubApiStub']);
+
+// 配置管理页不再有 DB 版 Wayback 代理（已迁移到文件化「历史档配置」）
+$cfgListHtml = (string)runRequest([], [], 'GET', [], '/config_list.php');
+test('config list has no wayback proxy card', strpos($cfgListHtml, 'waybackProxyCard') === false && strpos($cfgListHtml, '历史档配置') !== false, substr($cfgListHtml, (int)strpos($cfgListHtml, '历史档配置'), 200));
+$cfgCtrlSrc = (string)file_get_contents($root . '/app/Controllers/ConfigController.php');
+test('wayback proxy db handler removed', strpos($cfgCtrlSrc, 'save-wayback-proxy') === false && strpos($cfgCtrlSrc, 'handleWaybackProxySave') === false, $cfgCtrlSrc === '' ? 'empty' : 'present');
+test('wayback proxy reads env only', strpos($archSvcSrc, "get('wayback_proxy'") === false && strpos($archSvcSrc, 'wayback_proxy') === false, 'found wayback_proxy in WaybackService');
+
+// 【api/proxy.php】脚本向 config/proxy.json 追加代理（迁移自 wbm/proxy.php：X-API-Token 鉴权 + 幂等 upsert + 打码响应）
+$pxCfgPath = App\Services\ArchiveConfigService::dir() . '/proxy.json';
+$pxTok = 'pxtok' . substr(hash('sha256', 'proxy-api'), 0, 12);
+$pxRun = function (array $post) use ($pxTok) {
+    return runRequest([], $post, 'POST', [], '/api/proxy.php');
+};
+
+@unlink($pxCfgPath);
+$pxNoFile = json_decode($pxRun(['token' => $pxTok, 'proxy' => 'user:pass@1.1.1.1:1080']), true);
+test('api proxy fails without config file', is_array($pxNoFile) && empty($pxNoFile['ok']) && strpos((string)($pxNoFile['error'] ?? ''), '无法解析或不存在') !== false, json_encode($pxNoFile, JSON_UNESCAPED_UNICODE));
+
+App\Services\ArchiveConfigService::saveJson('proxy.json', ['proxies' => []]);
+$pxNoCfgTok = $pxRun(['token' => $pxTok, 'proxy' => 'user:pass@1.1.1.1:1080']);
+test('api proxy rejects when api_token not configured', strpos($pxNoCfgTok, '未配置或 token 不匹配') !== false, $pxNoCfgTok);
+
+App\Services\ArchiveConfigService::saveJson('proxy.json', [
+    'proxies' => [['id' => 'clash-local', 'name' => 'Clash 本地（HTTP）', 'url' => 'http://127.0.0.1:7890']],
+    'api_token' => $pxTok,
+]);
+$pxNoTok = $pxRun(['proxy' => 'user:pass@1.1.1.1:1080']);
+test('api proxy requires token', strpos($pxNoTok, '缺少 API Token') !== false, $pxNoTok);
+$pxBadTok = $pxRun(['token' => 'wrong-token', 'proxy' => 'user:pass@1.1.1.1:1080']);
+test('api proxy rejects wrong token', strpos($pxBadTok, 'token 不匹配') !== false, $pxBadTok);
+
+// 组合写法新增：无协议前缀默认 socks5h，id = p-<sha256 前12>，响应打码不含密码
+$pxAdd = json_decode($pxRun(['token' => $pxTok, 'proxy' => 'user:secret@1.2.3.4:1080']), true);
+$pxId = (string)($pxAdd['id'] ?? '');
+test('api proxy adds combined proxy masked', is_array($pxAdd) && !empty($pxAdd['ok']) && (bool)($pxAdd['updated'] ?? true) === false
+    && strpos($pxId, 'p-') === 0 && strlen($pxId) === 14
+    && (string)($pxAdd['url'] ?? '') === 'socks5h://user:***@1.2.3.4:1080'
+    && (string)($pxAdd['name'] ?? '') === '代理 1.2.3.4:1080'
+    && strpos(json_encode($pxAdd, JSON_UNESCAPED_UNICODE), 'secret') === false, json_encode($pxAdd, JSON_UNESCAPED_UNICODE));
+$pxFile = json_decode((string)@file_get_contents($pxCfgPath), true);
+test('api proxy persists entry and keeps top keys', count((array)($pxFile['proxies'] ?? [])) === 2
+    && (string)($pxFile['api_token'] ?? '') === $pxTok
+    && (string)($pxFile['proxies'][1]['url'] ?? '') === 'socks5h://user:secret@1.2.3.4:1080'
+    && (string)($pxFile['proxies'][0]['id'] ?? '') === 'clash-local', (string)@file_get_contents($pxCfgPath));
+
+// 幂等：同 url 重复提交 → updated=false，不重复追加
+$pxAgain = json_decode($pxRun(['token' => $pxTok, 'proxy' => 'user:secret@1.2.3.4:1080']), true);
+$pxFile2 = json_decode((string)@file_get_contents($pxCfgPath), true);
+test('api proxy idempotent same url', is_array($pxAgain) && (bool)($pxAgain['updated'] ?? true) === false && (string)($pxAgain['id'] ?? '') === $pxId && count((array)($pxFile2['proxies'] ?? [])) === 2, json_encode($pxAgain, JSON_UNESCAPED_UNICODE));
+
+// 凭据轮换：同键不同密码 → updated=true、id 不变、文件更新 url
+$pxRotate = json_decode($pxRun(['token' => $pxTok, 'proxy' => 'user:newpass@1.2.3.4:1080']), true);
+$pxFile3 = json_decode((string)@file_get_contents($pxCfgPath), true);
+test('api proxy rotates credentials without new id', is_array($pxRotate) && (bool)($pxRotate['updated'] ?? true) === true && (string)($pxRotate['id'] ?? '') === $pxId
+    && count((array)($pxFile3['proxies'] ?? [])) === 2
+    && (string)($pxFile3['proxies'][1]['url'] ?? '') === 'socks5h://user:newpass@1.2.3.4:1080'
+    && (string)($pxRotate['url'] ?? '') === 'socks5h://user:***@1.2.3.4:1080', json_encode($pxRotate, JSON_UNESCAPED_UNICODE));
+
+// 分开字段写法 + socks4a + 自定义名称
+$pxFields = json_decode($pxRun(['token' => $pxTok, 'user' => 'su', 'pass' => 'sp', 'host' => '5.6.7.8', 'port' => '1081', 'scheme' => 'socks4a', 'name' => '海外 SOCKS4A']), true);
+test('api proxy adds via separate fields', is_array($pxFields) && !empty($pxFields['ok']) && (string)($pxFields['name'] ?? '') === '海外 SOCKS4A' && (string)($pxFields['url'] ?? '') === 'socks4a://su:***@5.6.7.8:1081', json_encode($pxFields, JSON_UNESCAPED_UNICODE));
+
+// 校验分支
+$pxBadScheme = $pxRun(['token' => $pxTok, 'proxy' => 'ftp://1.2.3.4:21']);
+test('api proxy rejects bad scheme', strpos($pxBadScheme, '不支持的协议 scheme：ftp') !== false, $pxBadScheme);
+$pxBadPort = $pxRun(['token' => $pxTok, 'proxy' => 'socks5://1.2.3.4:0']);
+test('api proxy rejects bad port', strpos($pxBadPort, '端口非法') !== false, $pxBadPort);
+$pxHugePort = $pxRun(['token' => $pxTok, 'proxy' => 'socks5://1.2.3.4:99999']);
+test('api proxy rejects unparseable port', strpos($pxHugePort, '无法解析代理地址') !== false, $pxHugePort);
+$pxNoFields = $pxRun(['token' => $pxTok]);
+test('api proxy requires host and port', strpos($pxNoFields, '缺少 host/port') !== false, $pxNoFields);
+$pxAtHost = $pxRun(['token' => $pxTok, 'proxy' => 'socks5://a@b@c:1080']);
+test('api proxy rejects host with at', strpos($pxAtHost, '格式非法') !== false || strpos($pxAtHost, '无法解析') !== false || strpos($pxAtHost, '用户名非法') !== false, $pxAtHost);
+
+// JSON body 为空（Content-Type: application/json）→ 400；X-API-Token 头与 GET token 亦可传递
+$_SERVER['CONTENT_TYPE'] = 'application/json';
+$pxJsonEmpty = $pxRun(['token' => $pxTok]);
+unset($_SERVER['CONTENT_TYPE']);
+test('api proxy rejects empty json body', strpos($pxJsonEmpty, 'JSON body 解析失败') !== false, $pxJsonEmpty);
+
+$_SERVER['HTTP_X_API_TOKEN'] = $pxTok;
+$pxHeadTok = runRequest([], ['proxy' => 'user:hp@9.9.9.9:1080'], 'POST', [], '/api/proxy.php');
+unset($_SERVER['HTTP_X_API_TOKEN']);
+$pxHeadJ = json_decode($pxHeadTok, true);
+test('api proxy accepts x-api-token header', is_array($pxHeadJ) && (string)($pxHeadJ['url'] ?? '') === 'socks5h://user:***@9.9.9.9:1080', $pxHeadTok);
+
+$pxGetTok = runRequest(['token' => $pxTok], [], 'GET', [], '/api/proxy.php');
+test('api proxy accepts token via get', strpos($pxGetTok, '缺少 host/port') !== false, $pxGetTok);
+
+// 测试产生的项目根模板文件清理（templates/ 随项目提交，测试不得残留）
+@unlink(App\Services\ArchiveConfigService::templatesDir() . '/my-template.md');
+test('project templates dir keeps only shipped templates', !is_file(App\Services\ArchiveConfigService::templatesDir() . '/my-template.md') && is_file(App\Services\ArchiveConfigService::templatesDir() . '/waybackmachine-site.md'), App\Services\ArchiveConfigService::templatesDir());
+
 echo "\n========================================\n";
 echo "PASS: {$GLOBALS['pass']}  FAIL: {$GLOBALS['fail']}\n";
 exit($GLOBALS['fail'] > 0 ? 1 : 0);
