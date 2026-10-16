@@ -2,6 +2,7 @@
 
 namespace App\Controllers;
 
+use App\Repositories\SiteRepository;
 use App\Services\ArchiveConfigService;
 use App\Services\GitHubService;
 use App\Services\WaybackService;
@@ -284,6 +285,7 @@ class ArchiveController
             'accounts' => ArchiveConfigService::accounts(),
             'templates' => ArchiveConfigService::templates(),
             'repos' => ArchiveConfigService::repos(),
+            'site_options' => SiteRepository::domainOptions(),
             'csrf_token' => Security::csrfToken(),
             'error' => isset($state['error']) ? (string)$state['error'] : '',
             'notice' => isset($state['notice']) ? (string)$state['notice'] : '',

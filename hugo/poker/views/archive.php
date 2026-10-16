@@ -23,6 +23,7 @@ $selPreset = trim($f('proxy_preset'));
 if ($selPreset === '' && $proxies) {
     $selPreset = (string)($proxies[0]['id'] ?? '');
 }
+$siteOptions = isset($site_options) && is_array($site_options) ? $site_options : [];
 $manualShow = ($selPreset === '__manual__');
 $selTemplate = $f('template_id');
 if ($selTemplate === '' && $templates) {
@@ -49,6 +50,12 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
   .archive-page .step-num { display:inline-block; background:var(--sops-indigo); color:#fff; border-radius:999px; width:22px; height:22px; text-align:center; line-height:22px; font-size:12px; margin-right:8px; }
   .archive-page .archive-form { display:grid; grid-template-columns:repeat(12,1fr); gap:.75rem; align-items:end; }
   .archive-page .f-domain { grid-column:span 4; }
+  .archive-page .site-ac { position:relative; }
+  .archive-page .site-ac-menu { position:absolute; left:0; right:0; top:100%; margin-top:2px; z-index:1060; background:var(--card-bg, #fff); color:var(--body-color, inherit); border:1px solid rgba(0,0,0,.15); border-radius:.25rem; box-shadow:0 6px 18px rgba(0,0,0,.12); max-height:280px; overflow-y:auto; }
+  .archive-page .site-ac-item { padding:.35rem .6rem; cursor:pointer; display:flex; flex-direction:column; gap:1px; font-size:.82rem; line-height:1.3; }
+  .archive-page .site-ac-item.site-ac-active, .archive-page .site-ac-item:hover { background:rgba(13,110,253,.1); }
+  .archive-page .site-ac-domain { color:var(--body-color, inherit); word-break:break-all; }
+  .archive-page .site-ac-title { color:var(--sops-muted, #6c757d); font-size:.72rem; }
   .archive-page .f-proxy { grid-column:span 3; }
   .archive-page .f-actions { grid-column:span 5; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
   .archive-page label.small-label { font-size:.78rem; color:var(--sops-muted); margin-bottom:.25rem; display:block; }
@@ -112,8 +119,16 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
           <form method="post" id="form-check" class="archive-form">
             <input type="hidden" name="csrf_token" value="<?php echo e($csrf); ?>">
             <div class="f-domain">
-              <label class="small-label" for="domain">域名（如 www.sdwenkong.com）</label>
-              <input type="text" class="form-control form-control-sm" id="domain" name="domain" value="<?php echo e($f('domain')); ?>" placeholder="www.example.com" required>
+              <label class="small-label" for="domain">域名（输入可搜索站点，亦可手工录入；如 www.sdwenkong.com）</label>
+              <div class="site-ac">
+                <input type="text" class="form-control form-control-sm" id="domain" name="domain" value="<?php echo e($f('domain')); ?>" placeholder="www.example.com"
+                       autocomplete="off" role="combobox" aria-expanded="false" aria-controls="site_ac_menu" aria-autocomplete="list"
+                       onfocus="siteAcRender()" oninput="siteAcRender()" onkeydown="siteAcKey(event)"
+                       onblur="setTimeout(function(){ siteAcClose(); }, 150)" required>
+                <div class="site-ac-menu" id="site_ac_menu" role="listbox" hidden
+                     onmousedown="var it = siteAcItemOf(event.target); if (it) { event.preventDefault(); }"
+                     onclick="var it = siteAcItemOf(event.target); if (it) { siteAcPick(it); }"></div>
+              </div>
             </div>
             <div class="f-proxy">
               <label class="small-label" for="proxy_preset">代理</label>
@@ -365,6 +380,78 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
     if (opt.dataset.username) $('username').value = opt.dataset.username;
     var tok = (opt.dataset.token || '').trim();
     if (tok && tok.indexOf('PASTE_') !== 0) { $('token').value = tok; checkToken(); }
+  };
+
+  // 域名联想：站点下拉（支持搜索）+ 手工录入一体的 combobox
+  // ↑/↓ 移动高亮，Enter 选中或直接提交，Esc 关闭；鼠标点击选中；输入即按 域名/站点名 过滤
+  var SITE_OPTIONS = <?php echo json_encode($siteOptions, JSON_UNESCAPED_UNICODE); ?>;
+  var siteAcActive = -1;
+  function siteAcEsc(v) {
+    return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  window.siteAcItemOf = function (t) {
+    while (t && t !== document) {
+      if (t.classList && t.classList.contains('site-ac-item')) return t;
+      t = t.parentNode;
+    }
+    return null;
+  };
+  window.siteAcClose = function () {
+    var box = $('site_ac_menu'), input = $('domain');
+    if (box) box.hidden = true;
+    if (input) input.setAttribute('aria-expanded', 'false');
+    siteAcActive = -1;
+  };
+  window.siteAcRender = function () {
+    var box = $('site_ac_menu'), input = $('domain');
+    if (!box || !input) return;
+    var q = (input.value || '').trim().toLowerCase();
+    var list = (SITE_OPTIONS || []).filter(function (s) {
+      if (!q) return true;
+      return String(s.domain || '').toLowerCase().indexOf(q) !== -1 || String(s.site_title || '').toLowerCase().indexOf(q) !== -1;
+    }).slice(0, 50);
+    if (!list.length) { siteAcClose(); box.innerHTML = ''; return; }
+    box.innerHTML = list.map(function (s) {
+      var title = String(s.site_title || '').trim();
+      return '<div class="site-ac-item" role="option" data-domain="' + siteAcEsc(s.domain || '') + '">'
+        + '<span class="site-ac-domain">' + siteAcEsc(s.domain || '') + '</span>'
+        + (title ? '<span class="site-ac-title">' + siteAcEsc(title) + '</span>' : '')
+        + '</div>';
+    }).join('');
+    box.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    siteAcActive = -1;
+  };
+  window.siteAcPick = function (el) {
+    var input = $('domain');
+    if (!el || !input) return;
+    input.value = el.getAttribute('data-domain') || '';
+    siteAcClose();
+    input.focus();
+  };
+  window.siteAcKey = function (e) {
+    var box = $('site_ac_menu');
+    if (!box) return;
+    if (box.hidden) { if (e.key === 'ArrowDown') siteAcRender(); return; }
+    var items = box.querySelectorAll('.site-ac-item');
+    if (!items.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      siteAcActive += (e.key === 'ArrowDown' ? 1 : -1);
+      if (siteAcActive < 0) siteAcActive = items.length - 1;
+      if (siteAcActive >= items.length) siteAcActive = 0;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].classList) items[i].classList.toggle('site-ac-active', i === siteAcActive);
+      }
+      if (items[siteAcActive] && items[siteAcActive].scrollIntoView) {
+        items[siteAcActive].scrollIntoView({ block: 'nearest' });
+      }
+    } else if (e.key === 'Enter') {
+      if (siteAcActive >= 0 && items[siteAcActive]) { e.preventDefault(); siteAcPick(items[siteAcActive]); }
+      else { siteAcClose(); } // 无高亮时 Enter 交给表单提交（手工录入路径）
+    } else if (e.key === 'Escape') {
+      siteAcClose();
+    }
   };
 
   // Token 格式校验

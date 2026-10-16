@@ -3965,6 +3965,18 @@ test('archive config nav visible for editor', $cfgHasChild(['site.view', 'site.m
 // GET 页面骨架：四步表单 + 结果容器（查询结果经 AJAX，GET 不联网）
 $html = runRequest([], [], 'GET', $archEntryCookie, '/archive.php');
 test('archive page renders for viewer', strpos($html, '网站历史档') !== false && strpos($html, 'name="login_action"') === false, substr($html, 0, 160));
+
+// 域名输入框双模式：手工录入 + 站点下拉（取 siteops 表 domain，回填至 #domain）
+db("INSERT INTO siteops (ctx_id, git_name, domain, site_title, status) VALUES ('ARCHDOM1', 'archdom', 'www.archdom.com', 'Arch 一号站', 'enable')");
+db("INSERT INTO siteops (ctx_id, git_name, domain, status) VALUES ('ARCHDOM2', 'archdom2', 'www.archdom2.com', 'enable')");
+$archDomHtml = runRequest([], [], 'GET', $archEntryCookie, '/archive.php');
+$archDomOpts = App\Repositories\SiteRepository::domainOptions();
+test('archive site domain options from db', in_array('www.archdom.com', array_column($archDomOpts, 'domain'), true) && in_array('www.archdom2.com', array_column($archDomOpts, 'domain'), true), json_encode($archDomOpts, JSON_UNESCAPED_UNICODE));
+test('archive page has searchable site combobox', strpos($archDomHtml, 'id="site_ac_menu"') !== false && strpos($archDomHtml, '"domain":"www.archdom.com"') !== false && strpos($archDomHtml, 'Arch 一号站') !== false
+    && strpos($archDomHtml, 'siteAcRender') !== false && strpos($archDomHtml, 'siteAcPick') !== false && strpos($archDomHtml, 'siteAcKey') !== false
+    && strpos($archDomHtml, 'aria-autocomplete="list"') !== false, substr($archDomHtml, (int)strpos($archDomHtml, 'id="site_ac_menu"'), 300));
+test('archive page keeps manual domain input', strpos($archDomHtml, 'id="domain" name="domain"') !== false && strpos($archDomHtml, 'placeholder="www.example.com"') !== false
+    && strpos($archDomHtml, 'id="site_pick"') === false && strpos($archDomHtml, 'onkeydown="siteAcKey(event)"') !== false, substr($archDomHtml, (int)strpos($archDomHtml, 'id="domain"'), 360));
 test('archive page shows step skeleton', strpos($html, '查询 Archive 历史名称') !== false && strpos($html, '归档基线') !== false && strpos($html, '创建 GitHub 私有仓库') !== false && strpos($html, 'id="archiveResults"') !== false, substr($html, (int)strpos($html, 'step-num'), 200));
 test('archive page query form wired for ajax', strpos($html, 'id="form-check"') !== false && strpos($html, 'id="domain"') !== false && strpos($html, 'name="action" value="check"') !== false, substr($html, (int)strpos($html, 'id="form-check"'), 300));
 test('archive page proxy preset dropdown from file config', strpos($html, 'id="proxy_preset"') !== false && strpos($html, 'Clash 本地（HTTP）') !== false && strpos($html, '手工录入…') !== false, substr($html, (int)strpos($html, 'id="proxy_preset"'), 300));

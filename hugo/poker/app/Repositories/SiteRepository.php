@@ -182,6 +182,27 @@ class SiteRepository
         });
     }
 
+    /** 建站历史档等场景的站点下拉选项：domain + 站点名（新→旧、domain 去重，站点名回退 git_name） */
+    public static function domainOptions(int $limit = 2000): array
+    {
+        $rows = Database::fetchAll(
+            'SELECT "domain", "site_title", "git_name" FROM "siteops" WHERE "domain" IS NOT NULL AND "domain" <> \'\' ORDER BY "id" DESC LIMIT ' . (int)$limit
+        );
+        $out = [];
+        foreach ($rows as $r) {
+            $domain = trim((string)($r['domain'] ?? ''));
+            if ($domain === '' || isset($out[$domain])) {
+                continue;
+            }
+            $title = trim((string)($r['site_title'] ?? ''));
+            if ($title === '') {
+                $title = trim((string)($r['git_name'] ?? ''));
+            }
+            $out[$domain] = ['domain' => $domain, 'site_title' => $title];
+        }
+        return array_values($out);
+    }
+
     /**
      * 批量导入：单事务 + 批量 INSERT，性能提升 50-100 倍
      */
