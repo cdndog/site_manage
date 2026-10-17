@@ -1,4 +1,5 @@
 <?php
+use App\Services\ArchiveConfigService;
 use App\Services\GitHubService;
 use App\Services\WaybackService;
 
@@ -20,11 +21,39 @@ $f = function ($key, $default = '') use ($form) {
 };
 
 $selPreset = trim($f('proxy_preset'));
+if ($selPreset !== '' && $selPreset !== '__manual__' && ArchiveConfigService::proxyById($selPreset) === '') {
+    $selPreset = ''; // 未知预设回退自动
+}
 if ($selPreset === '' && $proxies) {
-    $selPreset = (string)($proxies[0]['id'] ?? '');
+    $selPreset = (string)($proxies[0]['id'] ?? ''); // 默认选首个预设（保持原行为）
+}
+// 代理 combobox 展示态：手工 → 输入地址；预设 → 显示预设名（隐藏字段携带 id，地址不落 DOM）；空 → 自动
+$proxyHidden = '';
+$proxyDisplay = '';
+if ($selPreset === '__manual__') {
+    $proxyHidden = '__manual__';
+    $proxyDisplay = $f('proxy_addr');
+} elseif ($selPreset !== '') {
+    $proxyHidden = $selPreset;
+    foreach ($proxies as $pPick) {
+        if ((string)($pPick['id'] ?? '') === $selPreset) {
+            $proxyDisplay = trim((string)($pPick['name'] ?? '')) !== '' ? (string)$pPick['name'] : (string)($pPick['id'] ?? '');
+            break;
+        }
+    }
+} else {
+    $proxyDisplay = $f('proxy_addr');
+}
+// 联想数据：首行 = 自动，预设行名称主行 + 打码地址辅行（真实地址不进 DOM，防凭据泄露）
+$pxOpts = [['id' => '', 'name' => '自动（直连 / 环境代理回退）', 'urlMasked' => '']];
+foreach ($proxies as $pPx) {
+    $pxOpts[] = [
+        'id' => (string)($pPx['id'] ?? ''),
+        'name' => trim((string)($pPx['name'] ?? '')) !== '' ? (string)$pPx['name'] : (string)($pPx['id'] ?? ''),
+        'urlMasked' => (string)preg_replace('#(//[^:/@]+):[^@]+@#', '$1:***@', (string)($pPx['url'] ?? '')),
+    ];
 }
 $siteOptions = isset($site_options) && is_array($site_options) ? $site_options : [];
-$manualShow = ($selPreset === '__manual__');
 $selTemplate = $f('template_id');
 if ($selTemplate === '' && $templates) {
     foreach ($templates as $tOpt) {
@@ -124,25 +153,25 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
                 <input type="text" class="form-control form-control-sm" id="domain" name="domain" value="<?php echo e($f('domain')); ?>" placeholder="www.example.com"
                        autocomplete="off" role="combobox" aria-expanded="false" aria-controls="site_ac_menu" aria-autocomplete="list"
                        onfocus="siteAcRender()" oninput="siteAcRender()" onkeydown="siteAcKey(event)"
-                       onblur="setTimeout(function(){ siteAcClose(); }, 150)" required>
+                       onblur="setTimeout(function(){ siteAcClose(); }, 150)">
                 <div class="site-ac-menu" id="site_ac_menu" role="listbox" hidden
                      onmousedown="var it = siteAcItemOf(event.target); if (it) { event.preventDefault(); }"
                      onclick="var it = siteAcItemOf(event.target); if (it) { siteAcPick(it); }"></div>
               </div>
             </div>
             <div class="f-proxy">
-              <label class="small-label" for="proxy_preset">代理</label>
-              <select class="form-control form-control-sm" id="proxy_preset" name="proxy_preset" onchange="onProxyPreset(this)">
-                <option value="">-- 自动（直连 / 环境代理回退）--</option>
-                <?php foreach ($proxies as $p): ?>
-                <?php $pv = (string)($p['id'] ?? $p['url'] ?? ''); ?>
-                <option value="<?php echo e($pv); ?>"<?php echo $selPreset === $pv ? ' selected' : ''; ?>><?php echo e($p['name'] ?? $p['id'] ?? $p['url'] ?? ''); ?></option>
-                <?php endforeach; ?>
-                <option value="__manual__"<?php echo $selPreset === '__manual__' ? ' selected' : ''; ?>>手工录入…</option>
-              </select>
-              <input type="text" class="form-control form-control-sm mt-2" id="proxy_addr" name="proxy_addr"
-                     value="<?php echo e($f('proxy_addr')); ?>" placeholder="http://ip:port 或 socks5h://ip:port"
-                     style="<?php echo $manualShow ? '' : 'display:none;' ?>" title="手工录入代理地址">
+              <label class="small-label" for="proxy_addr">代理（输入可搜索预设，亦可手工录入地址；测试探测外网连通性）</label>
+              <div class="site-ac">
+                <input type="text" class="form-control form-control-sm" id="proxy_addr" name="proxy_addr"
+                       value="<?php echo e($proxyDisplay); ?>" placeholder="留空 = 自动；或 http://ip:port / socks5h://ip:port"
+                       autocomplete="off" role="combobox" aria-expanded="false" aria-controls="px_ac_menu" aria-autocomplete="list"
+                       onfocus="pxAcRender()" oninput="pxAcInput()" onkeydown="pxAcKey(event)"
+                       onblur="setTimeout(function(){ pxAcClose(); }, 150)" title="自动 / 预设 / 手工代理地址">
+                <input type="hidden" name="proxy_preset" id="proxy_preset" value="<?php echo e($proxyHidden); ?>"<?php if ($proxyHidden !== '' && $proxyHidden !== '__manual__') { ?> data-picked="<?php echo e($proxyDisplay); ?>"<?php } ?>>
+                <div class="site-ac-menu" id="px_ac_menu" role="listbox" hidden
+                     onmousedown="var it = pxAcItemOf(event.target); if (it) { event.preventDefault(); }"
+                     onclick="var it = pxAcItemOf(event.target); if (it) { pxAcPick(it); }"></div>
+              </div>
             </div>
             <div class="f-actions">
               <div class="custom-control custom-checkbox mr-2">
@@ -154,6 +183,11 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
             </div>
           </form>
           <p class="archive-hint mt-2 mb-0">代理可从下拉选择（配置于「历史档配置」）或手工录入；"自动"模式直连失败时回退环境代理。SOCKS 建议用 <code>socks5h://</code>（DNS 走代理解析）。查询会抓取全部 HTTP 200 首页快照并并发提取标题；勾选「每年一个首页」则每年只取第一条（取消勾选=全部首页快照）。</p>
+
+          <div id="siteMetaBox" class="mt-2 mb-0" style="display:none;">
+            <span class="archive-hint">归属账号：<b id="siteMetaAccount" class="mono" style="color:var(--sops-indigo);"></b></span>
+            <span class="archive-hint ml-3">站点标题：<b id="siteMetaTitle" style="color:var(--body-color);"></b></span>
+          </div>
 
 <?php if (is_array($proxyTest)): ?>
           <div class="alert <?php echo !empty($proxyTest['ok']) ? 'alert-success' : 'alert-danger'; ?> py-2 small mt-2 mb-0"><?php echo e($proxyTest['msg'] ?? ''); ?></div>
@@ -293,13 +327,6 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
 
   function $(id) { return document.getElementById(id); }
 
-  window.onProxyPreset = function (sel) {
-    var manual = $('proxy_addr');
-    if (!manual) return;
-    manual.style.display = sel.value === '__manual__' ? '' : 'none';
-    if (sel.value === '__manual__') manual.focus();
-  };
-
   function setBaseline(ts, url, title, domain) {
     baseline = { ts: ts, url: url, title: title, domain: domain };
     $('archive_ts').value = ts;
@@ -331,7 +358,7 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
       if (btn && btn.value === 'proxy_test') return; // 测试代理：原生整页提交
       e.preventDefault();
       var domain = ($('domain').value || '').trim();
-      if (domain === '') return;
+      if (domain === '') { if (window.sopsToast) sopsToast('请先输入域名', 'warning'); $('domain').focus(); return; }
       var pm = $('progressModal');
       if (window.jQuery && pm) { window.jQuery(pm).modal('show'); } else if (pm) { pm.style.display = 'block'; }
       var data = new FormData(formCheck);
@@ -358,7 +385,7 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
             if (btnSel) {
               btnSel.addEventListener('click', function () {
                 var b = window.__pendingBaseline;
-                if (!b) { alert('请先选择一条记录'); return; }
+                if (!b) { if (window.sopsToast) sopsToast('请先选择一条记录', 'warning'); return; }
                 setBaseline(b.ts, b.url, b.title, b.domain);
               });
             }
@@ -368,7 +395,7 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
         })
         .catch(function () {
           if (window.jQuery && pm) { window.jQuery(pm).modal('hide'); } else if (pm) { pm.style.display = 'none'; }
-          alert('查询失败，请检查网络后重试。');
+          if (window.sopsToast) sopsToast('查询失败，请检查网络后重试。', 'danger');
         });
     });
   }
@@ -405,16 +432,21 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
   window.siteAcRender = function () {
     var box = $('site_ac_menu'), input = $('domain');
     if (!box || !input) return;
-    var q = (input.value || '').trim().toLowerCase();
+    var raw = (input.value || '').trim();
+    var pickedD = input.getAttribute('data-picked') || '';
+    // 值仍是已选站点 = 未过滤，聚焦即显示全部项（与代理 combobox 一致）
+    var q = (raw !== '' && raw === pickedD) ? '' : raw.toLowerCase();
     var list = (SITE_OPTIONS || []).filter(function (s) {
       if (!q) return true;
-      return String(s.domain || '').toLowerCase().indexOf(q) !== -1 || String(s.site_title || '').toLowerCase().indexOf(q) !== -1;
+      return String(s.domain || '').toLowerCase().indexOf(q) !== -1 || String(s.site_title || '').toLowerCase().indexOf(q) !== -1 || String(s.git_account || '').toLowerCase().indexOf(q) !== -1;
     }).slice(0, 50);
     if (!list.length) { siteAcClose(); box.innerHTML = ''; return; }
     box.innerHTML = list.map(function (s) {
       var title = String(s.site_title || '').trim();
+      var acct = String(s.git_account || '').trim();
+      var domainLabel = (acct ? String(s.domain || '') + ' - ' + acct : String(s.domain || ''));
       return '<div class="site-ac-item" role="option" data-domain="' + siteAcEsc(s.domain || '') + '">'
-        + '<span class="site-ac-domain">' + siteAcEsc(s.domain || '') + '</span>'
+        + '<span class="site-ac-domain">' + siteAcEsc(domainLabel) + '</span>'
         + (title ? '<span class="site-ac-title">' + siteAcEsc(title) + '</span>' : '')
         + '</div>';
     }).join('');
@@ -422,10 +454,29 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
     input.setAttribute('aria-expanded', 'true');
     siteAcActive = -1;
   };
+  // 域名归属信息展示：选中/输入域名后在提示下方显示 git_account 与站点标题
+  function siteMetaUpdate(domain) {
+    var box = $('siteMetaBox'), accEl = $('siteMetaAccount'), titleEl = $('siteMetaTitle');
+    if (!box || !accEl || !titleEl) return;
+    var d = String(domain || '').trim().toLowerCase();
+    if (!d) { box.style.display = 'none'; return; }
+    var hit = null;
+    for (var i = 0; i < (SITE_OPTIONS || []).length; i++) {
+      if (String(SITE_OPTIONS[i].domain || '').trim().toLowerCase() === d) { hit = SITE_OPTIONS[i]; break; }
+    }
+    if (!hit) { box.style.display = 'none'; return; }
+    accEl.textContent = String(hit.git_account || '').trim() || '—';
+    titleEl.textContent = String(hit.site_title || '').trim() || '—';
+    box.style.display = '';
+  }
+  window.__siteMetaUpdate = siteMetaUpdate;
+
   window.siteAcPick = function (el) {
     var input = $('domain');
     if (!el || !input) return;
     input.value = el.getAttribute('data-domain') || '';
+    input.setAttribute('data-picked', input.value);
+    siteMetaUpdate(input.value);
     siteAcClose();
     input.focus();
   };
@@ -454,6 +505,91 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
     }
   };
 
+  // 代理联想：预设下拉（支持搜索，地址打码显示）+ 手工录入 + 空值 = 自动，交互同域名 combobox
+  var PX_OPTIONS = <?php echo json_encode($pxOpts, JSON_UNESCAPED_UNICODE); ?>;
+  var pxAcActive = -1;
+  window.pxAcItemOf = function (t) {
+    while (t && t !== document) {
+      if (t.classList && t.classList.contains('site-ac-item')) return t;
+      t = t.parentNode;
+    }
+    return null;
+  };
+  window.pxAcClose = function () {
+    var box = $('px_ac_menu'), input = $('proxy_addr');
+    if (box) box.hidden = true;
+    if (input) input.setAttribute('aria-expanded', 'false');
+    pxAcActive = -1;
+  };
+  window.pxAcRender = function () {
+    var box = $('px_ac_menu'), input = $('proxy_addr'), hid = $('proxy_preset');
+    if (!box || !input) return;
+    var raw = (input.value || '').trim();
+    var picked = (hid && hid.getAttribute('data-picked')) || '';
+    // 值仍是已选预设名 = 未过滤，聚焦即显示全部项；一旦改动则按输入过滤
+    var q = (raw !== '' && raw === picked) ? '' : raw.toLowerCase();
+    var list = (PX_OPTIONS || []).filter(function (s) {
+      if (!q) return true;
+      return String(s.name || '').toLowerCase().indexOf(q) !== -1
+        || String(s.id || '').toLowerCase().indexOf(q) !== -1
+        || String(s.urlMasked || '').toLowerCase().indexOf(q) !== -1;
+    }).slice(0, 50);
+    if (!list.length) { pxAcClose(); box.innerHTML = ''; return; }
+    box.innerHTML = list.map(function (s) {
+      return '<div class="site-ac-item" role="option" data-id="' + siteAcEsc(s.id || '') + '" data-name="' + siteAcEsc(s.name || '') + '">'
+        + '<span class="site-ac-domain">' + siteAcEsc(s.name || '') + '</span>'
+        + (s.urlMasked ? '<span class="site-ac-title">' + siteAcEsc(s.urlMasked) + '</span>' : '')
+        + '</div>';
+    }).join('');
+    box.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    pxAcActive = -1;
+  };
+  window.pxAcPick = function (el) {
+    var input = $('proxy_addr'), hid = $('proxy_preset');
+    if (!el || !input || !hid) return;
+    var id = el.getAttribute('data-id') || '';
+    var name = el.getAttribute('data-name') || '';
+    if (id === '') { // 自动：清空输入与预设
+      input.value = ''; hid.value = ''; hid.removeAttribute('data-picked');
+    } else { // 预设：输入框显示预设名，隐藏字段携带 id（真实地址不进 DOM）
+      input.value = name; hid.value = id; hid.setAttribute('data-picked', name);
+    }
+    pxAcClose();
+    input.focus();
+  };
+  window.pxAcInput = function () {
+    var input = $('proxy_addr'), hid = $('proxy_preset');
+    if (!input || !hid) return;
+    var v = (input.value || '').trim();
+    var picked = hid.getAttribute('data-picked') || '';
+    if (v === '') { hid.value = ''; hid.removeAttribute('data-picked'); } // 空 = 自动
+    else if (v !== picked) { hid.value = '__manual__'; hid.removeAttribute('data-picked'); } // 一经编辑即手工模式
+    pxAcRender();
+  };
+  window.pxAcKey = function (e) {
+    var box = $('px_ac_menu');
+    if (!box) return;
+    if (box.hidden) { if (e.key === 'ArrowDown') pxAcRender(); return; }
+    var items = box.querySelectorAll('.site-ac-item');
+    if (!items.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      pxAcActive += (e.key === 'ArrowDown' ? 1 : -1);
+      if (pxAcActive < 0) pxAcActive = items.length - 1;
+      if (pxAcActive >= items.length) pxAcActive = 0;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].classList) items[i].classList.toggle('site-ac-active', i === pxAcActive);
+      }
+      if (items[pxAcActive] && items[pxAcActive].scrollIntoView) items[pxAcActive].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      if (pxAcActive >= 0 && items[pxAcActive]) { e.preventDefault(); pxAcPick(items[pxAcActive]); }
+      else { pxAcClose(); } // 无高亮时 Enter 交给表单提交
+    } else if (e.key === 'Escape') {
+      pxAcClose();
+    }
+  };
+
   // Token 格式校验
   function isValidToken(v) { return /^(ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{15,}$/.test(v); }
   function checkToken() {
@@ -471,10 +607,10 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
     var user = ($('username').value || '').trim();
     var repo = ($('repo_name').value || '').trim();
     var v = ($('token').value || '').trim();
-    if (user === '') { alert('GitHub 用户名为空，请输入用户名后继续。'); $('username').focus(); return false; }
-    if (repo === '') { alert('仓库名称为空，请输入仓库名称后继续。'); $('repo_name').focus(); return false; }
-    if (v === '') { alert('GitHub Token 为空，请输入有效的 Token 后继续。'); $('token').focus(); return false; }
-    if (!isValidToken(v)) { alert('GitHub Token 格式不正确（应以 ghp_ / gho_ / github_pat_ 等开头，长度至少 15 位）。'); $('token').focus(); return false; }
+    if (user === '') { if (window.sopsToast) sopsToast('GitHub 用户名为空，请输入用户名后继续。', 'warning'); $('username').focus(); return false; }
+    if (repo === '') { if (window.sopsToast) sopsToast('仓库名称为空，请输入仓库名称后继续。', 'warning'); $('repo_name').focus(); return false; }
+    if (v === '') { if (window.sopsToast) sopsToast('GitHub Token 为空，请输入有效的 Token 后继续。', 'warning'); $('token').focus(); return false; }
+    if (!isValidToken(v)) { if (window.sopsToast) sopsToast('GitHub Token 格式不正确（应以 ghp_ / gho_ / github_pat_ 等开头，长度至少 15 位）。', 'warning'); $('token').focus(); return false; }
     return true;
   };
 
@@ -498,7 +634,7 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
           wrap.innerHTML = html;
           wrap.querySelector('pre').textContent = j.readme || '';
         })
-        .catch(function () { alert('预览失败，请检查网络。'); });
+        .catch(function () { if (window.sopsToast) sopsToast('预览失败，请检查网络。', 'danger'); });
     });
   }
 
@@ -506,8 +642,11 @@ if ($repoNameDefault === '' && $baselineUrl !== '') {
     checkToken();
     var tok = $('token');
     if (tok) tok.addEventListener('input', checkToken);
-    var sel = $('proxy_preset');
-    if (sel) onProxyPreset(sel);
+    var domInput = $('domain');
+    if (domInput) {
+      siteMetaUpdate(domInput.value); // 回填态（服务端渲染 domain）也展示归属信息
+      domInput.addEventListener('input', function () { siteMetaUpdate(domInput.value); });
+    }
   });
 })();
 </script>

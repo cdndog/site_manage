@@ -3963,15 +3963,22 @@ test('archive config nav hidden for viewer', $cfgHasChild(['site.view']) === fal
 test('archive config nav visible for editor', $cfgHasChild(['site.view', 'site.manage']) === true);
 
 // GET 页面骨架：四步表单 + 结果容器（查询结果经 AJAX，GET 不联网）
+// 代理 combobox：预设下拉（支持搜索、地址打码）+ 手工录入 + 空值自动；带凭据预设的明文密码不得落 DOM
+App\Services\ArchiveConfigService::saveProxies([
+    ['id' => 'clash-local', 'name' => 'Clash 本地（HTTP）', 'url' => 'http://127.0.0.1:7890'],
+    ['id' => 'cred-proxy', 'name' => '凭据代理', 'url' => 'socks5h://cu:supersecret@10.0.0.8:1080'],
+]);
 $html = runRequest([], [], 'GET', $archEntryCookie, '/archive.php');
 test('archive page renders for viewer', strpos($html, '网站历史档') !== false && strpos($html, 'name="login_action"') === false, substr($html, 0, 160));
 
 // 域名输入框双模式：手工录入 + 站点下拉（取 siteops 表 domain，回填至 #domain）
-db("INSERT INTO siteops (ctx_id, git_name, domain, site_title, status) VALUES ('ARCHDOM1', 'archdom', 'www.archdom.com', 'Arch 一号站', 'enable')");
-db("INSERT INTO siteops (ctx_id, git_name, domain, status) VALUES ('ARCHDOM2', 'archdom2', 'www.archdom2.com', 'enable')");
+db("INSERT INTO siteops (ctx_id, git_name, domain, site_title, git_account, status) VALUES ('ARCHDOM1', 'archdom', 'www.archdom.com', 'Arch 一号站', 'wpkcdn', 'enable')");
+db("INSERT INTO siteops (ctx_id, git_name, domain, git_account, status) VALUES ('ARCHDOM2', 'archdom2', 'www.archdom2.com', 'okxonly', 'enable')");
 $archDomHtml = runRequest([], [], 'GET', $archEntryCookie, '/archive.php');
 $archDomOpts = App\Repositories\SiteRepository::domainOptions();
 test('archive site domain options from db', in_array('www.archdom.com', array_column($archDomOpts, 'domain'), true) && in_array('www.archdom2.com', array_column($archDomOpts, 'domain'), true), json_encode($archDomOpts, JSON_UNESCAPED_UNICODE));
+test('archive domain options carry git_account', in_array('wpkcdn', array_column($archDomOpts, 'git_account'), true) && in_array('okxonly', array_column($archDomOpts, 'git_account'), true), json_encode($archDomOpts, JSON_UNESCAPED_UNICODE));
+test('archive page site combobox shows git_account after domain', strpos($archDomHtml, 'String(s.domain || \'\') + \' - \' + acct') !== false && strpos($archDomHtml, 's.git_account') !== false, substr($archDomHtml, (int)strpos($archDomHtml, 'siteAcRender'), 300));
 test('archive page has searchable site combobox', strpos($archDomHtml, 'id="site_ac_menu"') !== false && strpos($archDomHtml, '"domain":"www.archdom.com"') !== false && strpos($archDomHtml, 'Arch 一号站') !== false
     && strpos($archDomHtml, 'siteAcRender') !== false && strpos($archDomHtml, 'siteAcPick') !== false && strpos($archDomHtml, 'siteAcKey') !== false
     && strpos($archDomHtml, 'aria-autocomplete="list"') !== false, substr($archDomHtml, (int)strpos($archDomHtml, 'id="site_ac_menu"'), 300));
@@ -3979,7 +3986,13 @@ test('archive page keeps manual domain input', strpos($archDomHtml, 'id="domain"
     && strpos($archDomHtml, 'id="site_pick"') === false && strpos($archDomHtml, 'onkeydown="siteAcKey(event)"') !== false, substr($archDomHtml, (int)strpos($archDomHtml, 'id="domain"'), 360));
 test('archive page shows step skeleton', strpos($html, '查询 Archive 历史名称') !== false && strpos($html, '归档基线') !== false && strpos($html, '创建 GitHub 私有仓库') !== false && strpos($html, 'id="archiveResults"') !== false, substr($html, (int)strpos($html, 'step-num'), 200));
 test('archive page query form wired for ajax', strpos($html, 'id="form-check"') !== false && strpos($html, 'id="domain"') !== false && strpos($html, 'name="action" value="check"') !== false, substr($html, (int)strpos($html, 'id="form-check"'), 300));
-test('archive page proxy preset dropdown from file config', strpos($html, 'id="proxy_preset"') !== false && strpos($html, 'Clash 本地（HTTP）') !== false && strpos($html, '手工录入…') !== false, substr($html, (int)strpos($html, 'id="proxy_preset"'), 300));
+test('archive page proxy combobox from file config', strpos($html, 'id="px_ac_menu"') !== false && strpos($html, '"id":"clash-local"') !== false && strpos($html, '自动（直连 \/ 环境代理回退）') !== false
+    && strpos($html, 'name="proxy_preset" id="proxy_preset" value="clash-local"') !== false
+    && strpos($html, 'id="proxy_addr" name="proxy_addr"') !== false && strpos($html, 'value="Clash 本地（HTTP）"') !== false
+    && strpos($html, 'data-picked="Clash 本地（HTTP）"') !== false
+    && strpos($html, 'pxAcRender') !== false && strpos($html, 'pxAcPick') !== false && strpos($html, 'pxAcKey') !== false && strpos($html, 'pxAcInput') !== false
+    && strpos($html, 'onProxyPreset') === false && strpos($html, '>手工录入…<') === false
+    && strpos($html, 'cu:***@10.0.0.8:1080') !== false && strpos($html, 'supersecret') === false, substr($html, (int)strpos($html, 'id="px_ac_menu"'), 300));
 test('archive page baseline empty before selection', strpos($html, 'id="baselineContent"') !== false && strpos($html, 'display:none') !== false && strpos($html, 'id="baselineHint"') !== false, substr($html, (int)strpos($html, 'id="baselineContent"'), 200));
 
 // 步骤1：AJAX 查询（CDX 三元组 + 并发标题），结果表以 JSON 返回
@@ -4029,12 +4042,16 @@ $archGoodCsrf = json_decode(runRequest([], ['action' => 'check', 'domain' => 'ex
 test('archive check accepts valid csrf', is_array($archGoodCsrf) && !empty($archGoodCsrf['ok']) && (int)($archGoodCsrf['count'] ?? 0) === 2, json_encode($archGoodCsrf, JSON_UNESCAPED_UNICODE));
 unset($GLOBALS['__waybackHttpStub']);
 
-// 步骤1 测试代理（整页）
-$GLOBALS['__waybackHttpStub'] = ['https://web.archive.org/cdx/search/cdx?url=archive.org&limit=1' => '[["timestamp","original"]]'];
+// 步骤1 测试代理（整页）：探测外网连通性（generate_204）
+$GLOBALS['__waybackHttpStub'] = ['https://www.google.com/generate_204' => ''];
 $archProxyHtml = runRequest([], ['action' => 'proxy_test', 'proxy_preset' => '__manual__', 'proxy_addr' => 'http://127.0.0.1:7890', 'csrf_token' => 'x'], 'POST', [], '/archive.php');
 test('archive proxy test reports success', strpos($archProxyHtml, '可用') !== false && strpos($archProxyHtml, '耗时') !== false && strpos($archProxyHtml, '127.0.0.1:7890') !== false, substr($archProxyHtml, (int)strpos($archProxyHtml, 'alert-success'), 260));
+test('archive proxy test page restores manual mode', strpos($archProxyHtml, 'name="proxy_preset" id="proxy_preset" value="__manual__"') !== false && strpos($archProxyHtml, 'value="http://127.0.0.1:7890"') !== false && strpos($archProxyHtml, 'data-picked=') === false, substr($archProxyHtml, (int)strpos($archProxyHtml, 'id="proxy_addr"'), 200));
 $archProxyEmpty = runRequest([], ['action' => 'proxy_test', 'proxy_preset' => '', 'csrf_token' => 'x'], 'POST', [], '/archive.php');
-test('archive proxy test requires address', strpos($archProxyEmpty, '请先选择或录入代理地址') !== false, substr($archProxyEmpty, (int)strpos($archProxyEmpty, 'alert-danger'), 200));
+test('archive proxy test auto mode (no addr) tests connectivity', strpos($archProxyEmpty, '可用') !== false && strpos($archProxyEmpty, '自动') !== false, substr($archProxyEmpty, (int)strpos($archProxyEmpty, 'alert-success'), 260));
+// 真实预设 id 提交：视图内 ArchiveConfigService::proxyById 需可用（use 导入缺失会导致 Class not found）
+$archProxyPreset = runRequest([], ['action' => 'proxy_test', 'proxy_preset' => 'clash-local', 'csrf_token' => 'x'], 'POST', [], '/archive.php');
+test('archive proxy test with real preset id renders', strpos($archProxyPreset, '可用') !== false && strpos($archProxyPreset, 'Internal Server Error') === false && strpos($archProxyPreset, 'Class &quot;ArchiveConfigService&quot;') === false, substr($archProxyPreset, (int)strpos($archProxyPreset, 'alert-success'), 260));
 unset($GLOBALS['__waybackHttpStub']);
 
 // 步骤3 预览（AJAX）：占位符替换 + GitHub 地址

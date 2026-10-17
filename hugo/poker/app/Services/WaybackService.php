@@ -29,7 +29,9 @@ class WaybackService
     const PAGES_TIMEOUT = 10;
     const SNAPSHOTS_TIMEOUT = 45;
     const TITLE_TIMEOUT = 25;
-    const PROXY_TEST_TIMEOUT = 25;
+    const PROXY_TEST_TIMEOUT = 4;
+    /** 代理连通性测试端点：轻量外网探测（返回 204 No Content），不依赖 archive.org 可用性 */
+    const PROXY_TEST_URL = 'https://www.google.com/generate_204';
 
     /** 自动模式代理地址：'' 表示未配置（仅直连）。取环境变量。 */
     public static function proxy(): string
@@ -390,26 +392,24 @@ class WaybackService
         return $results;
     }
 
-    /** 用给定代理对 CDX 做最小查询验证连通性；返回 ['ok','msg','code','elapsed','bytes'] */
+    /** 通过代理请求外网轻量端点，验证代理能否访问外部网络；$proxyAddr 为空时用环境代理/直连测试；返回 ['ok','msg','code','elapsed','bytes'] */
     public static function proxyTest(string $proxyAddr): array
     {
         $proxyAddr = trim($proxyAddr);
-        if ($proxyAddr === '') {
-            return ['ok' => false, 'msg' => '请先选择或录入代理地址', 'code' => 0, 'elapsed' => 0.0, 'bytes' => 0];
-        }
-        $testUrl = self::CDX_API . '?url=archive.org&limit=1&output=json&gzip=false';
+        $effective = $proxyAddr !== '' ? $proxyAddr : self::proxy();
+        $label = $proxyAddr !== '' ? self::proxyDisplay($proxyAddr) : '自动' . ($effective !== '' ? '（' . self::proxyDisplay($effective) . '）' : '（直连）');
         $t0 = microtime(true);
         try {
-            $body = self::httpGet($testUrl, self::PROXY_TEST_TIMEOUT, $proxyAddr);
+            $body = self::httpGet(self::PROXY_TEST_URL, self::PROXY_TEST_TIMEOUT, $effective);
         } catch (\Throwable $e) {
             $elapsed = round(microtime(true) - $t0, 2);
-            return ['ok' => false, 'msg' => '访问失败（' . $elapsed . 's）：' . $e->getMessage(), 'code' => 0, 'elapsed' => $elapsed, 'bytes' => 0];
+            return ['ok' => false, 'msg' => '访问外网失败（' . $elapsed . 's）：' . $e->getMessage(), 'code' => 0, 'elapsed' => $elapsed, 'bytes' => 0];
         }
         $elapsed = round(microtime(true) - $t0, 2);
         $bytes = strlen((string)$body);
         return [
             'ok' => true,
-            'msg' => sprintf('代理 %s 可用：耗时 %.2fs，返回 %d 字节', self::proxyDisplay($proxyAddr), $elapsed, $bytes),
+            'msg' => sprintf('代理 %s 可用：耗时 %.2fs，返回 %d 字节', $label, $elapsed, $bytes),
             'code' => 200,
             'elapsed' => $elapsed,
             'bytes' => $bytes,

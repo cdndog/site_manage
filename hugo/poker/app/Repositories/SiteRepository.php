@@ -182,11 +182,11 @@ class SiteRepository
         });
     }
 
-    /** 建站历史档等场景的站点下拉选项：domain + 站点名（新→旧、domain 去重，站点名回退 git_name） */
+    /** 建站历史档等场景的站点下拉选项：domain + 站点名 + git_account（新→旧、domain 去重，站点名回退 git_name） */
     public static function domainOptions(int $limit = 2000): array
     {
         $rows = Database::fetchAll(
-            'SELECT "domain", "site_title", "git_name" FROM "siteops" WHERE "domain" IS NOT NULL AND "domain" <> \'\' ORDER BY "id" DESC LIMIT ' . (int)$limit
+            'SELECT "domain", "site_title", "git_name", "git_account" FROM "siteops" WHERE "domain" IS NOT NULL AND "domain" <> \'\' ORDER BY "id" DESC LIMIT ' . (int)$limit
         );
         $out = [];
         foreach ($rows as $r) {
@@ -198,7 +198,7 @@ class SiteRepository
             if ($title === '') {
                 $title = trim((string)($r['git_name'] ?? ''));
             }
-            $out[$domain] = ['domain' => $domain, 'site_title' => $title];
+            $out[$domain] = ['domain' => $domain, 'site_title' => $title, 'git_account' => trim((string)($r['git_account'] ?? ''))];
         }
         return array_values($out);
     }
