@@ -17,7 +17,7 @@
             <label for="post_gitname">Git Name <span class="text-danger" aria-hidden="true">*</span></label>
             <div class="form-hint" data-toggle="tooltip" data-placement="top" title="GitHub 代码唯一标识，规则：域名同名（abc），或域名+语言（abcja）"><i class="bi bi-info-circle" aria-hidden="true"></i></div>
             </div>
-            <input type="text" class="form-control" id="post_gitname" name="post_gitname" value="<?php echo e($form['post_gitname']); ?>" required placeholder="abc 或 abcja" pattern="[a-z0-9\-]+(\.[a-z0-9\-]+)+" maxlength="40" data-msg="Git Name 仅支持小写字母/数字（如 abc 或 abcja）">
+            <input type="text" class="form-control" id="post_gitname" name="post_gitname" value="<?php echo e($form['post_gitname']); ?>" required placeholder="abc 或 abcja" pattern="[a-z0-9\-]+(\.[a-z0-9\-]+)*" maxlength="40" data-msg="Git Name 仅支持小写字母/数字（如 abc 或 abcja）">
             </div>
             <div class="col-md-6 col-12">
             <div class="sops-label-row">
@@ -242,15 +242,26 @@
         syncDeploy();
     })();
 
-    // 提交防重复：禁用按钮并显示状态
+    // 提交防重复：禁用按钮并显示状态；返回/恢复页面时重置，避免一直停在“提交中”
     (function () {
         var btn = document.getElementById('submitBtn');
         var form = document.getElementById('wechatpost');
         if (!btn || !form) return;
+        var defaultHtml = btn.innerHTML;
+        var resetBtn = function () {
+            btn.disabled = false;
+            btn.innerHTML = defaultHtml;
+        };
+        window.addEventListener('pageshow', resetBtn);
         form.addEventListener('submit', function () {
             if (btn.disabled) return;
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm mr-1" aria-hidden="true"></span>提交中…';
+        });
+        form.addEventListener('submit', function (event) {
+            setTimeout(function () {
+                if (event.defaultPrevented) resetBtn();
+            }, 0);
         });
     })();
 

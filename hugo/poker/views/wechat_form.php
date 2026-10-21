@@ -291,6 +291,13 @@
             });
         }
 
+        window.addEventListener('pageshow', function () {
+            var btn = document.getElementById('submitBtn');
+            if (!btn || !btn.disabled) return;
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle mr-1" aria-hidden="true"></i>提交';
+        });
+
         form.addEventListener('submit', function(event) {
             var submitBtn = document.getElementById('submitBtn');
             if (submitBtn && submitBtn.disabled) {
