@@ -20,7 +20,7 @@
             <label for="post_keyword">生成文章及关键词 <span class="text-danger" aria-hidden="true">*</span></label>
             <div class="form-hint" data-toggle="tooltip" data-placement="top" title="启用批量时用英文逗号分隔多个话题"><i class="bi bi-info-circle" aria-hidden="true"></i></div>
             </div>
-            <input type="text" class="form-control" id="post_keyword" name="post_keyword" required placeholder="录入需要批量生成文章及关键词" value="<?php echo e($form['post_keyword']); ?>" pattern="[^|｜]*" maxlength="1000" data-msg="关键词不能包含 ｜">
+            <input type="text" class="form-control" id="post_keyword" name="post_keyword" required placeholder="录入需要批量生成文章及关键词" value="<?php echo e($form['post_keyword']); ?>" pattern="[^\u007C\uFF5C]*" maxlength="1000" data-msg="关键词不能包含 ｜">
             </div>
             <div class="col-md-3 col-xs-12">
             <label for="post_bulkkeyword">启用批量</label>

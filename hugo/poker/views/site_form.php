@@ -31,13 +31,13 @@
         <label for="post_sitetitle">站点标题 <span class="text-danger" aria-hidden="true">*</span></label>
         <div class="form-hint" data-toggle="tooltip" data-placement="top" title="字数控制在 100 字内，不包含（｜）"><i class="bi bi-info-circle" aria-hidden="true"></i></div>
         </div>
-        <input type="text" class="form-control" id="post_sitetitle" name="post_sitetitle" value="<?php echo e(htmlspecialchars_decode(strip_tags($form['post_sitetitle']))); ?>" required placeholder="站点标题" pattern="[^|｜]*" maxlength="100" data-msg="站点标题不能包含 ｜，且不超过 100 字">
+        <input type="text" class="form-control" id="post_sitetitle" name="post_sitetitle" value="<?php echo e(htmlspecialchars_decode(strip_tags($form['post_sitetitle']))); ?>" required placeholder="站点标题" pattern="[^\u007C\uFF5C]*" maxlength="100" data-msg="站点标题不能包含 ｜，且不超过 100 字">
 
         <div class="sops-label-row">
         <label for="post_description">站点描述 <span class="text-danger" aria-hidden="true">*</span></label>
         <div class="form-hint" data-toggle="tooltip" data-placement="top" title="字数控制在 200 字内，不包含（｜）"><i class="bi bi-info-circle" aria-hidden="true"></i></div>
         </div>
-        <input type="text" class="form-control" id="post_description" name="post_description" value="<?php echo e(htmlspecialchars_decode(strip_tags($form['post_description']))); ?>" required placeholder="站点描述" pattern="[^|｜]*" maxlength="200" data-msg="站点描述不能包含 ｜，且不超过 200 字">
+        <input type="text" class="form-control" id="post_description" name="post_description" value="<?php echo e(htmlspecialchars_decode(strip_tags($form['post_description']))); ?>" required placeholder="站点描述" pattern="[^\u007C\uFF5C]*" maxlength="200" data-msg="站点描述不能包含 ｜，且不超过 200 字">
 
         <div class="sops-label-row">
         <label for="post_sitelogo"><i class="bi bi-image mr-1" aria-hidden="true"></i>参考图片</label>
@@ -129,21 +129,21 @@
             <label for="post_sns_id">SNS ID <span class="text-danger" aria-hidden="true">*</span></label>
             <div class="form-hint" data-toggle="tooltip" data-placement="top" title="Facebook / Twitter / YouTube ID，不包含（｜）"><i class="bi bi-info-circle" aria-hidden="true"></i></div>
             </div>
-            <input type="text" class="form-control" id="post_sns_id" name="post_sns_id" value="<?php echo e($form['post_sns_id']);?>" required placeholder="Facebook" pattern="[^|｜]*" maxlength="50" data-msg="SNS ID 不能包含 ｜">
+            <input type="text" class="form-control" id="post_sns_id" name="post_sns_id" value="<?php echo e($form['post_sns_id']);?>" required placeholder="Facebook" pattern="[^\u007C\uFF5C]*" maxlength="50" data-msg="SNS ID 不能包含 ｜">
             </div>
             <div class="col-md-4 col-12">
             <div class="sops-label-row">
             <label for="post_topnavmenus">顶部菜单项 <span class="text-danger" aria-hidden="true">*</span></label>
             <div class="form-hint" data-toggle="tooltip" data-placement="top" title="顶部导航栏目，英文逗号（,）分隔，不包含（｜）"><i class="bi bi-info-circle" aria-hidden="true"></i></div>
             </div>
-            <input type="text" class="form-control" id="post_topnavmenus" name="post_topnavmenus" value="<?php echo e($form['post_topnavmenus']);?>" required placeholder="首页, 关于" pattern="[^|｜]*" maxlength="200" data-msg="顶部菜单项不能包含 ｜">
+            <input type="text" class="form-control" id="post_topnavmenus" name="post_topnavmenus" value="<?php echo e($form['post_topnavmenus']);?>" required placeholder="首页, 关于" pattern="[^\u007C\uFF5C]*" maxlength="200" data-msg="顶部菜单项不能包含 ｜">
             </div>
             <div class="col-md-4 col-12">
             <div class="sops-label-row">
             <label for="post_keyword">SEO关键词 <span class="text-danger" aria-hidden="true">*</span></label>
             <div class="form-hint" data-toggle="tooltip" data-placement="top" title="SEO 关键词，英文逗号（,）分隔，不包含（｜）"><i class="bi bi-info-circle" aria-hidden="true"></i></div>
             </div>
-            <input type="text" class="form-control" id="post_keyword" name="post_keyword" value="<?php echo e($form['post_keyword']);?>" required placeholder="关键词1, 关键词2" pattern="[^|｜]*" maxlength="500" data-msg="SEO关键词不能包含 ｜">
+            <input type="text" class="form-control" id="post_keyword" name="post_keyword" value="<?php echo e($form['post_keyword']);?>" required placeholder="关键词1, 关键词2" pattern="[^\u007C\uFF5C]*" maxlength="500" data-msg="SEO关键词不能包含 ｜">
             </div>
         </div>
     </div>

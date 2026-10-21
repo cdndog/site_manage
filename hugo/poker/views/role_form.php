@@ -13,7 +13,7 @@
       <input type="hidden" name="id" value="<?php echo (int)$form['id']; ?>">
       <div class="form-group">
         <label for="name">角色名 <span class="text-danger" aria-hidden="true">*</span></label>
-        <input type="text" class="form-control" id="name" name="name" value="<?php echo e($form['name']); ?>" required pattern="[A-Za-z0-9_-]{2,32}" maxlength="32" data-msg="角色名仅支持 2-32 位字母/数字/_-">
+        <input type="text" class="form-control" id="name" name="name" value="<?php echo e($form['name']); ?>" required pattern="[A-Za-z0-9_\-]{2,32}" maxlength="32" data-msg="角色名仅支持 2-32 位字母/数字/_-">
       </div>
       <div class="form-group">
         <label for="description">描述</label>

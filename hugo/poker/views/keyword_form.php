@@ -12,7 +12,7 @@
         <div class="row">
             <div class="col-md-6 col-xs-12">
             <label for="post_keyword">监控关键词</label>
-            <input type="text" class="form-control" id="post_keyword" name="post_keyword" value="<?php echo e($form['post_keyword']); ?>" required placeholder="录入需要批量监控的关键词" pattern="[^|｜]*" maxlength="1000" data-msg="关键词不能包含 ｜">
+            <input type="text" class="form-control" id="post_keyword" name="post_keyword" value="<?php echo e($form['post_keyword']); ?>" required placeholder="录入需要批量监控的关键词" pattern="[^\u007C\uFF5C]*" maxlength="1000" data-msg="关键词不能包含 ｜">
             </div>
             <div class="col-md-3 col-xs-12">
             <label for="post_bulkkeyword">启用批量（逗号分隔）</label>
