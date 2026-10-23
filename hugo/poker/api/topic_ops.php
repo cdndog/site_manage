@@ -5,6 +5,7 @@ require __DIR__ . '/../app/bootstrap.php';
 
 use App\Config;
 use App\Repositories\TopicRepository;
+use App\Services\RewriteService;
 use App\Services\TopicService;
 use App\Support\Cache;
 use App\Support\Logger;
@@ -116,6 +117,66 @@ function topicOpsNormalize(array $input): array
 }
 }
 
+if (!function_exists("topicOpsDecodeArticle")) {
+function topicOpsDecodeArticle($value): array
+{
+    if (is_string($value)) {
+        $value = trim($value);
+        if ($value === '' || ($value[0] !== '{' && $value[0] !== '[')) {
+            return [];
+        }
+        $value = json_decode($value, true);
+    }
+    if (!is_array($value) || $value === []) {
+        return [];
+    }
+    if (isset($value[0]) && is_array($value[0])) {
+        $value = $value[0];
+    }
+    return $value;
+}
+}
+
+if (!function_exists("topicOpsLooksLikeArticle")) {
+function topicOpsLooksLikeArticle(array $value): bool
+{
+    foreach (['url', 'title', 'content', 'keywords', 'description', 'tags', 'static_thumbnail', 'iframesrc', 'savename', 'pubdomain', 'translate_to_langs', 'globalpublish', 'update_date'] as $key) {
+        if (array_key_exists($key, $value)) {
+            return true;
+        }
+    }
+    return false;
+}
+}
+
+if (!function_exists("topicOpsArticlePayload")) {
+function topicOpsArticlePayload($body, array $input): array
+{
+    $candidates = [];
+    foreach (['json', 'article', 'post_json', 'data'] as $key) {
+        if (is_array($body) && array_key_exists($key, $body)) {
+            $candidates[] = $body[$key];
+        }
+        if (array_key_exists($key, $input)) {
+            $candidates[] = $input[$key];
+        }
+    }
+    if (is_array($body) && topicOpsLooksLikeArticle($body)) {
+        $candidates[] = $body;
+    }
+    if (topicOpsLooksLikeArticle($input)) {
+        $candidates[] = $input;
+    }
+    foreach ($candidates as $candidate) {
+        $article = topicOpsDecodeArticle($candidate);
+        if ($article !== [] && topicOpsLooksLikeArticle($article)) {
+            return $article;
+        }
+    }
+    return [];
+}
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
     if (!defined('SOPS_TESTING')) { exit; }
@@ -170,6 +231,43 @@ foreach ($rawInput as $key => $value) {
 $providedColumns = array_values(array_unique($providedColumns));
 
 $post = topicOpsNormalize(TopicService::sanitizePost($rawInput));
+
+if (strtolower(trim((string)(isset($post['post_status']) ? $post['post_status'] : ''))) === RewriteService::STATUS) {
+    try {
+        $article = topicOpsArticlePayload($topicOpsBodyData, $_POST);
+        $task = RewriteService::createTask($post, $article);
+        $savedRecord = $task['record'];
+        $action = $task['action'];
+        TopicService::export();
+        Cache::forget('topic:summarize');
+        echo json_encode([
+            'ok' => true,
+            'total' => 1,
+            'created' => $action === 'created' ? 1 : 0,
+            'updated' => $action === 'updated' ? 1 : 0,
+            'rows' => [[
+                'action' => $action,
+                'ctx_id' => isset($savedRecord['ctx_id']) ? (string)$savedRecord['ctx_id'] : '',
+                'keyword' => isset($savedRecord['keyword']) ? (string)$savedRecord['keyword'] : '',
+                'git_name' => isset($savedRecord['git_name']) ? (string)$savedRecord['git_name'] : '',
+                'domain' => isset($savedRecord['domain']) ? (string)$savedRecord['domain'] : '',
+                'pubdir' => isset($savedRecord['pubdir']) ? (string)$savedRecord['pubdir'] : '',
+                'status' => isset($savedRecord['status']) ? (string)$savedRecord['status'] : '',
+                'lang' => isset($savedRecord['lang']) ? (string)$savedRecord['lang'] : '',
+                'geo' => isset($savedRecord['geo']) ? (string)$savedRecord['geo'] : '',
+                'seo_file' => (string)$task['seo_file'],
+            ]],
+        ], JSON_UNESCAPED_UNICODE);
+        return;
+    } catch (\InvalidArgumentException $e) {
+        topicOpsFail(400, $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log('topic_ops rewrite save error: ' . $e->getMessage());
+        topicOpsFail(500, 'save failed', $e->getMessage());
+        return;
+    }
+}
 
 $keyword = isset($post['post_keyword']) ? trim((string)$post['post_keyword']) : '';
 $gitName = isset($post['post_gitname']) ? trim((string)$post['post_gitname']) : '';

@@ -210,7 +210,7 @@ class TopicRepository
     {
         self::ensureTable();
         return Database::fetchAll(
-            'SELECT * FROM "sitetopic" WHERE "git_name" = :git_name ORDER BY "id" DESC',
+            'SELECT * FROM "sitetopic" WHERE "git_name" = :git_name AND COALESCE("status", \'\') <> \'rewrite\' ORDER BY "id" DESC',
             ['git_name' => $gitName]
         );
     }
@@ -218,7 +218,7 @@ class TopicRepository
     public static function all()
     {
         self::ensureTable();
-        return Database::fetchAll('SELECT * FROM "sitetopic" ORDER BY "id" DESC');
+        return Database::fetchAll('SELECT * FROM "sitetopic" WHERE COALESCE("status", \'\') <> \'rewrite\' ORDER BY "id" DESC');
     }
 
     const SORTABLE = ['id', 'ctx_id', 'keyword', 'status', 'git_name', 'domain', 'pubdir', 'lang', 'geo', 'lasttask', 'time'];
@@ -226,10 +226,10 @@ class TopicRepository
     public static function search($search, $page, $perPage, $sort = 'id', $order = 'desc')
     {
         self::ensureTable();
-        $where = '';
+        $where = ' WHERE COALESCE("status", \'\') <> \'rewrite\'';
         $params = [];
         if ($search !== '') {
-            $where = ' WHERE "keyword" LIKE :kw OR "domain" LIKE :kw OR "git_name" LIKE :kw OR "pubdir" LIKE :kw OR "status" LIKE :kw OR "lang" LIKE :kw OR "geo" LIKE :kw OR "lasttask" LIKE :kw OR "ctx_id" LIKE :kw';
+            $where .= ' AND ("keyword" LIKE :kw OR "domain" LIKE :kw OR "git_name" LIKE :kw OR "pubdir" LIKE :kw OR "status" LIKE :kw OR "lang" LIKE :kw OR "geo" LIKE :kw OR "lasttask" LIKE :kw OR "ctx_id" LIKE :kw)';
             $params['kw'] = '%' . $search . '%';
         }
         $orderBy = ' ORDER BY "id" DESC';
@@ -266,7 +266,7 @@ class TopicRepository
             'SELECT COUNT(*) AS "total",'
             . ' SUM(CASE WHEN "status" = \'aidone\' THEN 1 ELSE 0 END) AS "aidone",'
             . ' SUM(CASE WHEN "status" = \'enable\' THEN 1 ELSE 0 END) AS "enable"'
-            . ' FROM "sitetopic"'
+            . ' FROM "sitetopic" WHERE COALESCE("status", \'\') <> \'rewrite\''
         );
         if (is_array($row)) {
             $total = isset($row['total']) ? (int)$row['total'] : 0;
@@ -280,7 +280,7 @@ class TopicRepository
             'SELECT "domain", COUNT(*) AS "total",'
             . ' SUM(CASE WHEN "status" = \'aidone\' THEN 1 ELSE 0 END) AS "aidone",'
             . ' SUM(CASE WHEN "status" = \'enable\' THEN 1 ELSE 0 END) AS "enable"'
-            . ' FROM "sitetopic" WHERE "domain" IS NOT NULL AND "domain" != \'\''
+            . ' FROM "sitetopic" WHERE "domain" IS NOT NULL AND "domain" != \'\' AND COALESCE("status", \'\') <> \'rewrite\''
             . ' GROUP BY "domain" ORDER BY MIN("id")'
         );
         foreach ($rows as $r) {
@@ -295,7 +295,7 @@ class TopicRepository
             'SELECT substr("lasttask", 1, 8) AS "d", COUNT(*) AS "total",'
             . ' SUM(CASE WHEN "status" = \'aidone\' THEN 1 ELSE 0 END) AS "aidone",'
             . ' SUM(CASE WHEN "status" = \'enable\' THEN 1 ELSE 0 END) AS "enable"'
-            . ' FROM "sitetopic" WHERE "lasttask" IS NOT NULL AND length("lasttask") >= 8'
+            . ' FROM "sitetopic" WHERE "lasttask" IS NOT NULL AND length("lasttask") >= 8 AND COALESCE("status", \'\') <> \'rewrite\''
             . ' GROUP BY substr("lasttask", 1, 8)'
         );
         foreach ($rows as $r) {
@@ -327,7 +327,7 @@ class TopicRepository
         $chunkSize = 5000;
         do {
             $rows = Database::fetchAll(
-                'SELECT ' . $colStr . ' FROM "sitetopic" ORDER BY "id" ASC LIMIT ' . $chunkSize . ' OFFSET ' . $offset
+                'SELECT ' . $colStr . ' FROM "sitetopic" WHERE COALESCE("status", \'\') <> \'rewrite\' ORDER BY "id" ASC LIMIT ' . $chunkSize . ' OFFSET ' . $offset
             );
             foreach ($rows as $row) {
                 $parts = [];

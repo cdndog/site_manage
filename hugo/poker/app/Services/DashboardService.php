@@ -13,7 +13,7 @@ class DashboardService
     public static function stats()
     {
         $sites = self::rows('SELECT "domain","site_title","git_name","status","languages","theme_type","time" FROM "siteops"');
-        $topics = self::rows('SELECT "ctx_id","domain","git_name","keyword","pubdir","status","lang","geo","time" FROM "sitetopic"');
+        $topics = self::rows('SELECT "ctx_id","domain","git_name","keyword","pubdir","status","lang","geo","time" FROM "sitetopic" WHERE COALESCE("status", \'\') <> \'rewrite\'');
         $keywords = self::rows('SELECT "ctx_id","keyword","git_name","status","lang","geo","pubdir","time" FROM "keywordmonitorlist"');
         $articles = self::rows('SELECT "ctx_id","title","lang","series","pubdir","pubdomain","globalpublish","time" FROM "article"');
         $publish = self::rows('SELECT "ctx_id","keyword","lang","pubdomain","createAt","publishAt" FROM "aigc_status"');

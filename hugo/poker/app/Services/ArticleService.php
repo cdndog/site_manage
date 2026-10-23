@@ -174,22 +174,71 @@ class ArticleService
         return '';
     }
 
-    /** 读取 content.html 首个值，形态兼容同 textFirst */
+    /**
+     * 合并 content.html 的全部片段，跳过空段落；html 为空时回退 content.text。
+     */
     public static function htmlFirst($node)
     {
-        if (is_array($node)) {
-            $node = $node['html'] ?? null;
-        }
-        if (is_array($node)) {
-            $node = $node[0] ?? null;
-        }
+        return self::htmlJoin($node);
+    }
+
+    private static function htmlJoin($node)
+    {
         if (is_string($node)) {
-            return $node;
+            $trimmed = trim($node);
+            if ($trimmed !== '' && ($trimmed[0] === '{' || $trimmed[0] === '[')) {
+                $decoded = json_decode($trimmed, true);
+                if (is_array($decoded)) {
+                    return self::htmlJoin($decoded);
+                }
+            }
+            return self::isBlankHtml($node) ? '' : $node;
+        }
+        if (is_array($node)) {
+            if (array_key_exists('html', $node)) {
+                $html = self::htmlJoin($node['html']);
+                if ($html !== '') {
+                    return $html;
+                }
+            }
+            if (array_key_exists('text', $node)) {
+                $text = self::textFirst($node);
+                if ($text !== '') {
+                    return $text;
+                }
+            }
+            $parts = [];
+            foreach ($node as $item) {
+                $part = self::htmlJoin($item);
+                if ($part !== '') {
+                    $parts[] = $part;
+                }
+            }
+            return implode("\n", $parts);
         }
         if (is_int($node) || is_float($node)) {
             return (string)$node;
         }
         return '';
+    }
+
+    private static function isBlankHtml($html): bool
+    {
+        $html = (string)$html;
+        if (trim($html) === '') {
+            return true;
+        }
+        $text = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = str_replace("\xC2\xA0", ' ', $text);
+        if (trim($text) !== '') {
+            return false;
+        }
+        foreach (['<img', '<iframe', '<video', '<audio', '<canvas', '<svg'] as $tag) {
+            if (stripos($html, $tag) !== false) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** 读取 text 节点全部值为数组（原为字符串时整体视为一项），供 implode/多值字段使用 */
@@ -544,22 +593,30 @@ class ArticleService
         return $messages;
     }
 
+    public static function saveSeoJsonFile(array $json)
+    {
+        $ctxId = isset($json['post_uuid']) ? (string)$json['post_uuid'] : '';
+        if ($ctxId === '') {
+            return null;
+        }
+        $seoJsonDir = Config::dataDir() . '/seodata/json';
+        if (!is_dir($seoJsonDir)) {
+            @mkdir($seoJsonDir, 0755, true);
+        }
+        $seoJsonFile = $seoJsonDir . '/' . $ctxId . '.json';
+        file_put_contents($seoJsonFile, json_encode([$json], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        return $seoJsonFile;
+    }
+
     public static function saveSeoData(array $json)
     {
         $messages = [];
         $ctxId = isset($json['post_uuid']) ? (string)$json['post_uuid'] : '';
         if ($ctxId !== '') {
-            $seoDataDir = Config::dataDir() . '/seodata';
-            if (!is_dir($seoDataDir)) {
-                @mkdir($seoDataDir, 0755, true);
+            $seoJsonFile = self::saveSeoJsonFile($json);
+            if ($seoJsonFile !== null) {
+                $messages[] = 'seodata/json/' . $ctxId . '.json saved.';
             }
-            $seoJsonDir = $seoDataDir . '/json';
-            if (!is_dir($seoJsonDir)) {
-                @mkdir($seoJsonDir, 0755, true);
-            }
-            $seoJsonFile = $seoJsonDir . '/' . $ctxId . '.json';
-            file_put_contents($seoJsonFile, json_encode([$json], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-            $messages[] = 'seodata/json/' . $ctxId . '.json saved.';
         }
 
         if (!empty($json['pubdomain'])) {

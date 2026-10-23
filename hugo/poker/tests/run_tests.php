@@ -200,8 +200,8 @@ $flattenModules = function ($list) use (&$flattenModules) {
 };
 $flatMods = $flattenModules($mods);
 $flatUrls = array_map(function ($m) { return isset($m['url']) ? $m['url'] : ''; }, $flatMods);
-test('headerModules grouped by 7 domains', is_array($mods) && count($mods) === 7 && $mods[0]['title'] === '数据看板' && $mods[0]['url'] === 'dash.php' && $mods[0]['perm'] === 'report.view' && $mods[1]['title'] === '站点管理' && $mods[2]['title'] === '关键词管理' && $mods[3]['title'] === '话题管理' && $mods[4]['title'] === '文章管理' && $mods[5]['title'] === '发布管理' && $mods[6]['title'] === '系统管理');
-test('headerModules contains all entries', in_array('dash.php', $flatUrls, true) && in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true) && in_array('publish_list.php', $flatUrls, true));
+test('headerModules grouped by 8 domains', is_array($mods) && count($mods) === 8 && $mods[0]['title'] === '数据看板' && $mods[0]['url'] === 'dash.php' && $mods[0]['perm'] === 'report.view' && $mods[1]['title'] === '站点管理' && $mods[2]['title'] === '关键词管理' && $mods[3]['title'] === '话题管理' && $mods[4]['title'] === '改写管理' && $mods[4]['url'] === 'rewriteops.php' && $mods[5]['title'] === '文章管理' && $mods[6]['title'] === '发布管理' && $mods[7]['title'] === '系统管理');
+test('headerModules contains all entries', in_array('dash.php', $flatUrls, true) && in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('rewriteops.php', $flatUrls, true) && in_array('rewritelist.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true) && in_array('publish_list.php', $flatUrls, true));
 $html = runRequest();
 test('header module nav renders', strpos($html, 'sops-sidebar-link') !== false);
 foreach ($flatUrls as $url) {
@@ -1212,6 +1212,10 @@ test('article confirm shows content html', strpos($html, '<p>Poker is fun.</p>')
 test('article confirm shows pubdomain', strpos($html, 'testpoker.com,shpoker.com') !== false);
 test('article no publish message without globalpublish', strpos($html, '发布任务已触发') === false);
 
+echo "== article html extraction ==\n";
+test('article html joins all fragments and skips empty', App\Services\ArticleService::htmlFirst(['html' => ['<p></p>', '<p>one</p>', '<p>two</p>']]) === "<p>one</p>\n<p>two</p>", '');
+test('article html falls back to text list', App\Services\ArticleService::htmlFirst(['text' => ['<p>fallback</p>']]) === '<p>fallback</p>', '');
+
 echo "== articleops: upsert by ctx_id ==\n";
 $html = runRequest([], [
     'post_uuid' => $ctxId,
@@ -1776,11 +1780,11 @@ test('rbac tables exist', count($rbacTables) === 5, implode(',', array_column($r
 $seedRoles = db("SELECT name FROM roles ORDER BY id");
 test('rbac seed roles', array_column($seedRoles, 'name') === ['admin', 'editor', 'viewer'], implode(',', array_column($seedRoles, 'name')));
 $seedPerms = db("SELECT code FROM permissions ORDER BY id");
-test('rbac seed permissions', count($seedPerms) === 11 && in_array('config.manage', array_column($seedPerms, 'code'), true), implode(',', array_column($seedPerms, 'code')));
+test('rbac seed permissions', count($seedPerms) === 13 && in_array('rewrite.view', array_column($seedPerms, 'code'), true) && in_array('rewrite.manage', array_column($seedPerms, 'code'), true) && in_array('config.manage', array_column($seedPerms, 'code'), true), implode(',', array_column($seedPerms, 'code')));
 $adminRole = db("SELECT id FROM roles WHERE name='admin'");
 $adminRoleId = (int)$adminRole[0]['id'];
 $adminPermCount = db("SELECT COUNT(*) AS c FROM role_permissions WHERE role_id=$adminRoleId");
-test('rbac admin role has all permissions', (int)$adminPermCount[0]['c'] === 11, 'c=' . $adminPermCount[0]['c']);
+test('rbac admin role has all permissions', (int)$adminPermCount[0]['c'] === 13, 'c=' . $adminPermCount[0]['c']);
 
 // user CRUD via repository
 $uid = App\Repositories\UserRepository::create([
@@ -2189,6 +2193,17 @@ test('topictask all outputs single file-format line', is_array($jsondata) && cou
 test('topictask selected row is enable', count($parts) === 8 && $parts[2] === 'enable', $line);
 $dbrow = db("SELECT * FROM sitetopic WHERE ctx_id='" . $parts[0] . "'");
 test('topictask row exists in database', count($dbrow) === 1, 'ctx=' . $parts[0]);
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('JSONTASK1', 'json-task', 'json-task.com', 'json task kw', 'article', 'enable', 'en', 'US', '', '{\"keyword\":\"json task kw\",\"git_name\":\"json-task\",\"domain\":\"json-task.com\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-01 09:30:00')");
+$jsonTaskOut = runRequest(['t' => 'json task kw', 'format' => 'json'], [], 'GET', [], '/api/topic_task.php');
+$jsonTask = json_decode($jsonTaskOut, true);
+test('topictask format json returns task object', is_array($jsonTask) && ($jsonTask['ctx_id'] ?? '') === 'JSONTASK1' && ($jsonTask['keyword'] ?? '') === 'json task kw' && ($jsonTask['status'] ?? '') === 'enable' && is_array($jsonTask['json'] ?? null) && ($jsonTask['json']['keyword'] ?? '') === 'json task kw', $jsonTaskOut);
+$jsonTaskRow = db("SELECT * FROM sitetopic WHERE ctx_id='JSONTASK1'");
+test('topictask format json marks lasttask', is_array($jsonTaskRow) && count($jsonTaskRow) === 1 && $jsonTaskRow[0]['lasttask'] === date('Ymd'), json_encode($jsonTaskRow));
+$jsonEmptyOut = runRequest(['t' => 'no-such-json-task', 'format' => 'json'], [], 'GET', [], '/api/topic_task.php');
+test('topictask format json returns empty object when no task', trim($jsonEmptyOut) === '{}', $jsonEmptyOut);
+$badFormatOut = runRequest(['t' => 'json task kw', 'format' => 'xml'], [], 'GET', [], '/api/topic_task.php');
+test('topictask rejects invalid format', strpos($badFormatOut, 'FAIL: invalid format') !== false, $badFormatOut);
+db("DELETE FROM sitetopic WHERE ctx_id='JSONTASK1'");
 db("UPDATE sitetopic SET json = '{\"git_name\":\"testpoker\",\"domain\":\"testpoker.com\",\"keyword\":\"poker strategy guide\",\"pubdir\":\"article\",\"status\":\"enable\",\"lang\":\"en\",\"geo\":\"US\"}' WHERE ctx_id = 'TOPICCTX001'");
 $out = runRequest(['t' => 'poker strategy guide'], [], 'GET', [], '/api/topic_task.php');
 $line = trim($out);
@@ -2636,6 +2651,66 @@ resetRequest();
 $_SERVER['REQUEST_METHOD'] = 'OPTIONS';
 $out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
 test('topic_ops OPTIONS returns empty 204', $out === '', $out);
+
+echo "== rewrite task creation API ==\n";
+$rwApiId = '17920894836ad11d8b5e9009911467aa';
+$rwApiArticle = [
+    'post_uuid' => $rwApiId,
+    'url' => 'https://rewrite-api.example/post/1',
+    'title' => ['text' => ['API rewrite title']],
+    'content' => ['html' => ['<p>API rewrite body</p>']],
+    'lang' => 'en',
+    'pubdir' => 'article',
+];
+resetRequest();
+$_POST = [
+    'post_uuid' => $rwApiId,
+    'post_keyword' => 'API rewrite title',
+    'post_gitname' => 'rw-api',
+    'post_domain' => 'rewrite-api.example',
+    'post_status' => 'rewrite',
+    'post_lang' => 'en',
+    'post_geo' => 'US',
+    'json' => $rwApiArticle,
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$rwApiJson = json_decode($out, true);
+test('topic_ops rewrite creates task', is_array($rwApiJson) && $rwApiJson['ok'] === true && ($rwApiJson['created'] ?? 0) === 1 && ($rwApiJson['rows'][0]['status'] ?? '') === 'rewrite', $out);
+test('topic_ops rewrite returns seo file path', is_array($rwApiJson) && ($rwApiJson['rows'][0]['seo_file'] ?? '') === 'seodata/json/' . $rwApiId . '.json', $out);
+$rwApiRow = App\Repositories\TopicRepository::byCtxId($rwApiId);
+$rwApiRowJson = is_array($rwApiRow) ? json_decode((string)$rwApiRow['json'], true) : null;
+test('topic_ops rewrite stores content html', is_array($rwApiRowJson) && ($rwApiRowJson['content']['html'] ?? null) === ['<p>API rewrite body</p>'], json_encode($rwApiRowJson, JSON_UNESCAPED_UNICODE));
+$rwApiFile = $dataDir . '/seodata/json/' . $rwApiId . '.json';
+$rwApiDisk = is_file($rwApiFile) ? json_decode((string)file_get_contents($rwApiFile), true) : null;
+test('topic_ops rewrite writes seodata json file', is_array($rwApiDisk) && isset($rwApiDisk[0]) && is_array($rwApiDisk[0]) && ($rwApiDisk[0]['post_uuid'] ?? '') === $rwApiId && ($rwApiDisk[0]['content']['html'] ?? null) === ['<p>API rewrite body</p>'], is_file($rwApiFile) ? (string)file_get_contents($rwApiFile) : 'missing');
+
+$rwOpsId = '17920894836ad11d8b5e9009911467bb';
+$rwOpsArticle = $rwApiArticle;
+$rwOpsArticle['post_uuid'] = $rwOpsId;
+$rwOpsArticle['title'] = ['text' => ['Rewrite ops title']];
+resetRequest();
+$_POST = [
+    'post_uuid' => $rwOpsId,
+    'post_keyword' => 'Rewrite ops title',
+    'post_gitname' => 'rw-api-2',
+    'post_status' => 'enable',
+    'json' => $rwOpsArticle,
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/rewrite_ops.php');
+$rwOpsJson = json_decode($out, true);
+$rwOpsRow = App\Repositories\TopicRepository::byCtxId($rwOpsId);
+test('rewrite_ops creates rewrite task and forces status', is_array($rwOpsJson) && $rwOpsJson['ok'] === true && ($rwOpsJson['created'] ?? 0) === 1 && is_array($rwOpsRow) && ($rwOpsRow['status'] ?? '') === 'rewrite', $out);
+$rwOpsFile = $dataDir . '/seodata/json/' . $rwOpsId . '.json';
+test('rewrite_ops writes seodata json file', is_file($rwOpsFile), $rwOpsFile);
+
+App\Services\RewriteService::deleteByCtxId($rwApiId);
+App\Services\RewriteService::deleteByCtxId($rwOpsId);
+@unlink($rwApiFile);
+@unlink($rwOpsFile);
 
 // --- api/topicops.php（topic_ops.php 别名）---
 resetRequest();
@@ -4340,6 +4415,273 @@ test('api proxy accepts token via get', strpos($pxGetTok, '缺少 host/port') !=
 // 测试产生的项目根模板文件清理（templates/ 随项目提交，测试不得残留）
 @unlink(App\Services\ArchiveConfigService::templatesDir() . '/my-template.md');
 test('project templates dir keeps only shipped templates', !is_file(App\Services\ArchiveConfigService::templatesDir() . '/my-template.md') && is_file(App\Services\ArchiveConfigService::templatesDir() . '/waybackmachine-site.md'), App\Services\ArchiveConfigService::templatesDir());
+
+echo "== rewrite management ==\n";
+App\Repositories\TopicRepository::ensureTable();
+db("DELETE FROM sitetopic WHERE status = 'rewrite'");
+$rwLegacyDir = App\Services\RewriteService::jsonDir();
+@mkdir($rwLegacyDir, 0755, true);
+@unlink(App\Services\RewriteService::dataDir() . '/.migrated-to-sitetopic');
+$rwLegacyId = '17920894836ad11d8b5e900991146720';
+$rwLegacyRecord = [
+    'ctx_id' => $rwLegacyId,
+    'git_name' => 'rw-legacy',
+    'domain' => 'rw-legacy.com',
+    'keyword' => 'legacy rewrite kw',
+    'pubdir' => 'article',
+    'status' => 'enable',
+    'lang' => 'en',
+    'geo' => 'US',
+    'lasttask' => '20260101',
+];
+file_put_contents($rwLegacyDir . '/' . $rwLegacyId . '.json', App\Services\TopicService::buildJson($rwLegacyRecord));
+$rwLegacyAll = App\Services\RewriteService::all();
+$rwLegacy = App\Services\RewriteService::byCtxId($rwLegacyId);
+test('rewrite legacy files migrate into sitetopic as rewrite', is_array($rwLegacy) && $rwLegacy['status'] === 'rewrite' && is_file(App\Services\RewriteService::dataDir() . '/.migrated-to-sitetopic'), json_encode($rwLegacy, JSON_UNESCAPED_UNICODE));
+test('rewrite legacy migration excludes migrated rows from topic list', App\Repositories\TopicRepository::search($rwLegacyId, 1, 20)['total'] === 0, json_encode($rwLegacyAll, JSON_UNESCAPED_UNICODE));
+App\Services\RewriteService::deleteByCtxId($rwLegacyId);
+
+$rwId = '17920894836ad11d8b5e900991146727';
+$rwRecord = [
+    'ctx_id' => $rwId,
+    'git_name' => 'rw-site',
+    'domain' => 'rw.com',
+    'keyword' => 'rewrite kw',
+    'pubdir' => 'article',
+    'status' => 'enable',
+    'lang' => 'en',
+    'geo' => 'US',
+    'lasttask' => '',
+    'content' => '<p>rewrite kw body</p>',
+];
+$rwSaved = App\Services\RewriteService::saveRecord($rwRecord);
+$rwRow = App\Repositories\TopicRepository::byCtxId($rwId);
+test('rewrite save inserts sitetopic row with status rewrite', is_array($rwRow) && $rwRow['status'] === 'rewrite' && $rwSaved['status'] === 'rewrite', json_encode($rwRow, JSON_UNESCAPED_UNICODE));
+$rwExpected = array_merge($rwRecord, ['status' => 'rewrite']);
+$rwExpectedJson = json_decode(App\Services\TopicService::buildJson($rwExpected), true);
+$rwExpectedJson['content'] = ['html' => ['<p>rewrite kw body</p>']];
+$rwDecoded = is_array($rwRow) ? json_decode((string)$rwRow['json'], true) : null;
+test('rewrite json matches topic json plus content', $rwDecoded === $rwExpectedJson, is_array($rwRow) ? (string)$rwRow['json'] : '');
+test('rewrite json keys equal topic json fields plus content', is_array($rwDecoded) && array_keys($rwDecoded) === array_merge(App\Services\RewriteService::FIELDS, ['content']), implode(',', is_array($rwDecoded) ? array_keys($rwDecoded) : []));
+
+$rwPostId = '17920894836ad11d8b5e900991146728';
+$rwHtml = runRequest([], [
+    'post_uuid' => $rwPostId,
+    'post_keyword' => 'rewrite ui kw',
+    'post_gitname' => 'rw-ui',
+    'post_domain' => 'rw-ui.com',
+    'post_lang' => 'ja',
+    'post_geo' => 'JP',
+    'post_pubdir' => 'article',
+    'post_status' => 'enable',
+    'post_lasttask' => '',
+    'post_ckeditor_contents' => '<p>Rewrite UI body</p>',
+    'setupNum' => 'ckeditorFormated',
+    'csrf_token' => 'uivision-key-1',
+], 'POST', [], '/rewriteops.php');
+$rwPostRow = App\Repositories\TopicRepository::byCtxId($rwPostId);
+$rwPostJson = is_array($rwPostRow) ? json_decode((string)$rwPostRow['json'], true) : null;
+test('rewriteops POST saves sitetopic rewrite and renders confirm', is_array($rwPostRow) && $rwPostRow['status'] === 'rewrite' && strpos($rwHtml, $rwPostId) !== false && strpos($rwHtml, 'rewrite ui kw') !== false, substr($rwHtml, 0, 200));
+test('rewriteops POST stores content html', is_array($rwPostJson) && ($rwPostJson['content']['html'] ?? null) === ['<p>Rewrite UI body</p>'], json_encode($rwPostJson, JSON_UNESCAPED_UNICODE));
+$rwEditHtml = runRequest(['eid' => $rwPostId], [], 'GET', [], '/rewriteops.php');
+test('rewriteops edit preloads content html', strpos($rwEditHtml, 'id="post_ckeditor_contents"') !== false && strpos($rwEditHtml, 'Rewrite UI body') !== false && strpos($rwEditHtml, 'js/ckeditor5/ckeditor5.css') !== false, substr($rwEditHtml, 0, 200));
+test('rewrite editor matches article_new ckeditor config and ui', strpos($rwEditHtml, 'findAndReplace') !== false && strpos($rwEditHtml, 'imageUpload') !== false && strpos($rwEditHtml, 'ImgBBUploadAdapterPlugin') !== false && strpos($rwEditHtml, 'balloonToolbar') !== false && strpos($rwEditHtml, 'word-count') !== false && strpos($rwEditHtml, 'list2number') !== false, substr($rwEditHtml, 0, 200));
+$rwFallbackId = '17920894836ad11d8b5e900991146734';
+$rwFallbackFile = $dataDir . '/rewrite_source_fallback.txt';
+$rwFallbackJson = json_encode([
+    'url' => 'https://fallback.example/post/1',
+    'title' => ['text' => ['Fallback Source Title']],
+    'content' => ['text' => ['<p>Source fallback body</p>']],
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+file_put_contents($rwFallbackFile, $rwFallbackId . '|https://fallback.example/post/1|' . $rwFallbackJson . "\n");
+App\Services\RewriteService::saveRecord([
+    'ctx_id' => $rwFallbackId,
+    'git_name' => 'rw-fallback',
+    'domain' => 'fallback.example',
+    'keyword' => 'Fallback rewrite',
+    'pubdir' => 'article',
+    'status' => 'enable',
+    'lang' => 'en',
+    'geo' => 'US',
+    'lasttask' => '',
+    'content' => '',
+]);
+$rwFallback = App\Services\RewriteService::byCtxId($rwFallbackId, [$rwFallbackFile]);
+test('rewrite edit backfills missing content from source list', is_array($rwFallback) && ($rwFallback['content'] ?? '') === '<p>Source fallback body</p>', json_encode($rwFallback, JSON_UNESCAPED_UNICODE));
+App\Services\RewriteService::deleteByCtxId($rwFallbackId);
+@unlink($rwFallbackFile);
+test('rewrite confirm no longer exposes json file path', strpos($rwHtml, 'rewritedatas/json/') === false && strpos($rwHtml, 'sitetopic (status=rewrite)') !== false, substr($rwHtml, 0, 200));
+App\Services\RewriteService::deleteByCtxId($rwPostId);
+
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('RWNORMAL001', 'rw-normal', 'rw-normal.com', 'normal hidden kw', 'article', 'enable', 'en', 'US', '', '{}', '2026-01-01 00:00:00')");
+$rwAll = App\Services\RewriteService::all();
+$rwAllIds = array_column($rwAll, 'ctx_id');
+test('rewrite all only returns status rewrite', in_array($rwId, $rwAllIds, true) && !in_array('RWNORMAL001', $rwAllIds, true), json_encode($rwAllIds));
+
+resetRequest();
+$_GET = ['t' => 'all', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$rwOut = runRequest(['t' => 'all', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
+$rwParts = explode('|', trim($rwOut));
+test('rewritetask t=all returns pipe-delimited topic-shaped rewrite line', count($rwParts) === 8 && $rwParts[0] === $rwId && strpos($rwOut, 'rewrite kw') !== false, $rwOut);
+test('rewritetask output includes content html', strpos($rwOut, 'rewrite kw body') !== false, $rwOut);
+$rwAfter = App\Services\RewriteService::byCtxId($rwId);
+test('rewritetask marks lasttask=today in sitetopic', is_array($rwAfter) && ($rwAfter['lasttask'] ?? '') === date('Ymd'), json_encode($rwAfter));
+test('rewritetask preserves rewrite content html', is_array($rwAfter) && ($rwAfter['content'] ?? '') === '<p>rewrite kw body</p>', json_encode($rwAfter));
+$rwAllAgain = runRequest(['t' => 'all', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
+test('rewritetask t=all mirrors topic random pick', strpos($rwAllAgain, $rwId) !== false, $rwAllAgain);
+$rwSpecific = runRequest(['t' => $rwId, 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
+test('rewritetask specific t skips records handled today', trim($rwSpecific) === '', $rwSpecific);
+$rwNormalTask = runRequest(['t' => 'RWNORMAL001', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
+test('rewritetask does not expose enable topics', trim($rwNormalTask) === '', $rwNormalTask);
+
+$rwTopicStatus = runRequest(['t' => 'all', 'status' => 'rewrite', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/topic_task.php');
+$rwTopicParts = explode('|', trim($rwTopicStatus));
+test('topic_task supports status rewrite', count($rwTopicParts) === 8 && $rwTopicParts[0] === $rwId && $rwTopicParts[2] === 'rewrite' && strpos($rwTopicStatus, 'rewrite kw body') !== false, $rwTopicStatus);
+$rwTopicAlias = runRequest(['t' => 'all', 'status' => 'rewrite', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/topictask.php');
+test('topictask alias supports status rewrite', trim($rwTopicAlias) === trim($rwTopicStatus), $rwTopicAlias);
+$rwTopicJsonOut = runRequest(['t' => 'all', 'status' => 'rewrite', 'format' => 'json', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/topic_task.php');
+$rwTopicJson = json_decode($rwTopicJsonOut, true);
+test('topic_task rewrite format json returns content', is_array($rwTopicJson) && ($rwTopicJson['ctx_id'] ?? '') === $rwId && ($rwTopicJson['status'] ?? '') === 'rewrite' && is_array($rwTopicJson['json'] ?? null) && ($rwTopicJson['json']['content']['html'][0] ?? '') === '<p>rewrite kw body</p>', $rwTopicJsonOut);
+$rwAliasJsonOut = runRequest(['t' => 'all', 'format' => 'json', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
+$rwAliasJson = json_decode($rwAliasJsonOut, true);
+test('rewritetask alias supports format json', is_array($rwAliasJson) && ($rwAliasJson['ctx_id'] ?? '') === $rwId && ($rwAliasJson['status'] ?? '') === 'rewrite', $rwAliasJsonOut);
+$rwBadStatus = runRequest(['t' => 'all', 'status' => 'running', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/topic_task.php');
+test('topic_task rejects unsupported status', strpos($rwBadStatus, 'FAIL: invalid status') !== false, $rwBadStatus);
+
+$rwMissing = runRequest([], [], 'GET', [], '/api/rewritetask.php');
+test('rewritetask missing t returns 400', strpos($rwMissing, 'FAIL: t parameter required') !== false, $rwMissing);
+
+$rwList = json_decode(runRequest(['format' => 'json'], [], 'GET', [], '/rewritelist.php'), true);
+test('rewritelist json returns rewrite records', is_array($rwList) && ($rwList['total'] ?? 0) === 1 && ($rwList['rows'][0]['ctx_id'] ?? '') === $rwId, json_encode($rwList, JSON_UNESCAPED_UNICODE));
+$rwListSearch = json_decode(runRequest(['format' => 'json', 'search' => 'rw.com'], [], 'GET', [], '/rewritelist.php'), true);
+test('rewritelist search filters records', is_array($rwListSearch) && ($rwListSearch['total'] ?? 0) === 1, json_encode($rwListSearch, JSON_UNESCAPED_UNICODE));
+$rwListEmpty = json_decode(runRequest(['format' => 'json', 'search' => 'no-such-rewrite'], [], 'GET', [], '/rewritelist.php'), true);
+test('rewritelist search returns empty', is_array($rwListEmpty) && ($rwListEmpty['total'] ?? -1) === 0, json_encode($rwListEmpty, JSON_UNESCAPED_UNICODE));
+$rwListHtml = runRequest([], [], 'GET', [], '/rewritelist.php');
+test('rewritelist page renders table', strpos($rwListHtml, '改写列表') !== false && strpos($rwListHtml, 'rewritelist.php') !== false && strpos($rwListHtml, 'id="table"') !== false, substr($rwListHtml, 0, 200));
+$rwAdminName = App\Repositories\UserRepository::findByUsername('seedadmin') !== null ? 'seedadmin' : 'admin';
+$rwAdminCookie = ['siteops_uid' => 'rwadmin1', 'siteops_auth' => App\Support\Security::buildAuthCookie($rwAdminName, time() + 3600)];
+$rwListEditorHtml = runRequest([], [], 'GET', $rwAdminCookie, '/rewritelist.php');
+$rwFilesConfig = App\Config::baseKey('rewrite_files', []);
+$rwFirstFile = is_array($rwFilesConfig) && count($rwFilesConfig) > 0 ? (string)reset($rwFilesConfig) : '';
+test('rewritelist import exposes configured rewrite_files', $rwFirstFile !== '' && strpos($rwListEditorHtml, '<select class="form-control" id="rewriteImportPath"') !== false && strpos($rwListEditorHtml, $rwFirstFile) !== false, $rwFirstFile . ' / ' . substr($rwListEditorHtml, 0, 80));
+test('rewritelist import exposes siteops publish domain picker', strpos($rwListEditorHtml, 'id="rewriteImportDomain"') !== false && strpos($rwListEditorHtml, '发布到域名') !== false, substr($rwListEditorHtml, 0, 80));
+
+$rwImportId = '17920894836ad11d8b5e900991146731';
+$rwImportUrl = 'https://www.example-rewrite.com/post/1';
+$rwImportFile = $dataDir . '/rewrite_article_list.txt';
+$rwImportJson = json_encode([
+    'pubdir' => 'article',
+    'url' => $rwImportUrl,
+    'lang' => 'ja',
+    'title' => ['text' => ['Imported Article Title']],
+    'content' => ['html' => ['<p>Imported body</p>']],
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+file_put_contents($rwImportFile, $rwImportId . '|' . $rwImportUrl . '|' . $rwImportJson . "\n");
+$rwImport = json_decode(runRequest([], ['action' => 'import-articles', 'import_path' => $rwImportFile, 'csrf_token' => 'uivision-key-1'], 'POST', [], '/rewritelist.php'), true);
+$rwImported = App\Services\RewriteService::byCtxId($rwImportId);
+test('rewritelist imports article list file', is_array($rwImport) && !empty($rwImport['rows'][0]['ok']) && ($rwImport['rows'][0]['imported'] ?? 0) === 1 && is_array($rwImported), json_encode($rwImport, JSON_UNESCAPED_UNICODE));
+test('rewrite import maps article fields and status rewrite', is_array($rwImported) && $rwImported['keyword'] === 'Imported Article Title' && $rwImported['domain'] === 'www.example-rewrite.com' && $rwImported['lang'] === 'ja' && $rwImported['geo'] === 'JP' && $rwImported['pubdir'] === 'article' && $rwImported['status'] === 'rewrite' && $rwImported['content'] === '<p>Imported body</p>', json_encode($rwImported, JSON_UNESCAPED_UNICODE));
+$rwImportUpdateJson = json_encode([
+    'pubdir' => 'article',
+    'url' => $rwImportUrl,
+    'lang' => 'en',
+    'geo' => 'US',
+    'title' => ['text' => ['Updated Imported Article Title']],
+    'content' => ['html' => ['<p>Updated body</p>']],
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+file_put_contents($rwImportFile, $rwImportId . '|' . $rwImportUrl . '|' . $rwImportUpdateJson . "\n");
+$rwImportAgain = json_decode(runRequest([], ['action' => 'import-articles', 'import_path' => $rwImportFile, 'csrf_token' => 'uivision-key-1'], 'POST', [], '/rewritelist.php'), true);
+$rwImportedAgain = App\Services\RewriteService::byCtxId($rwImportId);
+test('rewrite import updates existing ctx_id', is_array($rwImportAgain) && !empty($rwImportAgain['rows'][0]['ok']) && ($rwImportAgain['rows'][0]['imported'] ?? -1) === 0 && ($rwImportAgain['rows'][0]['updated'] ?? 0) === 1, json_encode($rwImportAgain, JSON_UNESCAPED_UNICODE));
+test('rewrite import overwrites existing lang geo and keyword', is_array($rwImportedAgain) && $rwImportedAgain['lang'] === 'en' && $rwImportedAgain['geo'] === 'US' && $rwImportedAgain['keyword'] === 'Updated Imported Article Title' && $rwImportedAgain['content'] === '<p>Updated body</p>', json_encode($rwImportedAgain, JSON_UNESCAPED_UNICODE));
+$rwNormalImportFile = $dataDir . '/rewrite_article_normal_list.txt';
+$rwNormalImportJson = json_encode([
+    'pubdir' => 'article',
+    'url' => 'https://rw-normal.com/post/1',
+    'lang' => 'ja',
+    'geo' => 'JP',
+    'title' => ['text' => ['should not overwrite']],
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+file_put_contents($rwNormalImportFile, 'RWNORMAL001|https://rw-normal.com/post/1|' . $rwNormalImportJson . "\n");
+$rwNormalImport = json_decode(runRequest([], ['action' => 'import-articles', 'import_path' => $rwNormalImportFile, 'csrf_token' => 'uivision-key-1'], 'POST', [], '/rewritelist.php'), true);
+$rwNormalAfter = App\Repositories\TopicRepository::byCtxId('RWNORMAL001');
+test('rewrite import does not overwrite non-rewrite topic', is_array($rwNormalImport) && ($rwNormalImport['rows'][0]['updated'] ?? -1) === 0 && ($rwNormalImport['rows'][0]['skipped'] ?? 0) === 1 && is_array($rwNormalAfter) && $rwNormalAfter['keyword'] === 'normal hidden kw' && $rwNormalAfter['lang'] === 'en' && $rwNormalAfter['geo'] === 'US', json_encode($rwNormalImport, JSON_UNESCAPED_UNICODE));
+App\Services\RewriteService::deleteByCtxId($rwImportId);
+@unlink($rwNormalImportFile);
+
+App\Repositories\SiteRepository::upsertByDomain([
+    'ctx_id' => 'RWPUBSITE1',
+    'git_name' => 'rw-publish',
+    'domain' => 'publish-rewrite.com',
+    'site_title' => 'Rewrite Publish',
+    'languages' => 'ja',
+    'status' => 'enable',
+]);
+$rwTargetId = '17920894836ad11d8b5e900991146732';
+$rwTargetUrl = 'https://source-article.example/post/2';
+$rwTargetFile = $dataDir . '/rewrite_article_target_list.txt';
+$rwTargetJson = json_encode([
+    'pubdir' => 'article',
+    'url' => $rwTargetUrl,
+    'title' => ['text' => ['Targeted Rewrite Title']],
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+$rwTargetKeepId = '17920894836ad11d8b5e900991146733';
+$rwTargetKeepJson = json_encode([
+    'pubdir' => 'article',
+    'url' => 'https://source-article.example/post/3',
+    'lang' => 'en',
+    'geo' => 'US',
+    'title' => ['text' => ['Keep Source Language Title']],
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+file_put_contents($rwTargetFile, $rwTargetId . '|' . $rwTargetUrl . '|' . $rwTargetJson . "\n" . $rwTargetKeepId . '|https://source-article.example/post/3|' . $rwTargetKeepJson . "\n");
+$rwTargetImport = json_decode(runRequest([], ['action' => 'import-articles', 'import_path' => $rwTargetFile, 'publish_domain' => 'publish-rewrite.com', 'csrf_token' => 'uivision-key-1'], 'POST', [], '/rewritelist.php'), true);
+$rwTargetRow = App\Services\RewriteService::byCtxId($rwTargetId);
+$rwTargetKeepRow = App\Services\RewriteService::byCtxId($rwTargetKeepId);
+test('rewrite import applies selected siteops git_name', is_array($rwTargetRow) && $rwTargetRow['git_name'] === 'rw-publish', json_encode($rwTargetRow, JSON_UNESCAPED_UNICODE));
+test('rewrite import applies selected siteops domain', is_array($rwTargetRow) && $rwTargetRow['domain'] === 'publish-rewrite.com' && $rwTargetRow['keyword'] === 'Targeted Rewrite Title' && $rwTargetRow['status'] === 'rewrite', json_encode($rwTargetRow, JSON_UNESCAPED_UNICODE));
+test('rewrite import defaults missing lang to site language', is_array($rwTargetRow) && $rwTargetRow['lang'] === 'ja', json_encode($rwTargetRow, JSON_UNESCAPED_UNICODE));
+test('rewrite import defaults missing geo to site region', is_array($rwTargetRow) && $rwTargetRow['geo'] === 'JP', json_encode($rwTargetRow, JSON_UNESCAPED_UNICODE));
+test('rewrite import keeps explicitly set lang and geo', is_array($rwTargetKeepRow) && $rwTargetKeepRow['lang'] === 'en' && $rwTargetKeepRow['geo'] === 'US', json_encode($rwTargetKeepRow, JSON_UNESCAPED_UNICODE));
+test('rewrite import reports selected publish target', is_array($rwTargetImport) && strpos((string)($rwTargetImport['rows'][0]['message'] ?? ''), 'publish-rewrite.com(rw-publish)') !== false, json_encode($rwTargetImport, JSON_UNESCAPED_UNICODE));
+$rwTargetInvalid = json_decode(runRequest([], ['action' => 'import-articles', 'import_path' => $rwTargetFile, 'publish_domain' => 'missing-rewrite-site.com', 'csrf_token' => 'uivision-key-1'], 'POST', [], '/rewritelist.php'), true);
+test('rewrite import rejects unknown publish domain', is_array($rwTargetInvalid) && ($rwTargetInvalid['rows'][0]['ok'] ?? true) === false && strpos((string)($rwTargetInvalid['rows'][0]['message'] ?? ''), 'siteops') !== false, json_encode($rwTargetInvalid, JSON_UNESCAPED_UNICODE));
+App\Services\RewriteService::deleteByCtxId($rwTargetId);
+App\Services\RewriteService::deleteByCtxId($rwTargetKeepId);
+$rwPubSiteRow = App\Repositories\SiteRepository::byDomain('publish-rewrite.com');
+if (is_array($rwPubSiteRow)) {
+    App\Repositories\SiteRepository::deleteByCtxId($rwPubSiteRow['ctx_id']);
+}
+
+$rwDelId = '17920894836ad11d8b5e900991146730';
+App\Services\RewriteService::saveRecord(array_merge($rwRecord, ['ctx_id' => $rwDelId, 'keyword' => 'delete me', 'lasttask' => '']));
+$rwDel = json_decode(runRequest([], ['action' => 'delete-rewrite', 'ctx_id' => $rwDelId, 'csrf_token' => 'uivision-key-1'], 'POST', [], '/rewritelist.php'), true);
+test('rewritelist delete removes rewrite row', is_array($rwDel) && !empty($rwDel['rows'][0]['ok']) && App\Repositories\TopicRepository::byCtxId($rwDelId) === null, json_encode($rwDel, JSON_UNESCAPED_UNICODE));
+test('rewrite service refuses to delete non-rewrite topic', !App\Services\RewriteService::deleteByCtxId('RWNORMAL001') && App\Repositories\TopicRepository::byCtxId('RWNORMAL001') !== null, 'RWNORMAL001');
+
+App\Repositories\TopicRepository::export();
+$rwExport = (string)@file_get_contents($dataDir . '/topic_monitor_list.txt');
+test('topic export excludes rewrite rows', strpos($rwExport, 'rewrite kw') === false, substr($rwExport, 0, 200));
+
+resetRequest();
+$_POST = [
+    'post_uuid' => $rwId,
+    'post_keyword' => 'rewrite kw',
+    'post_gitname' => 'rw-site',
+    'post_status' => 'enable',
+    'csrf_token' => 'uivision-key-1',
+];
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$rwTransitionOut = runApiEndpoint(dirname(__DIR__) . '/api/topic_ops.php');
+$rwTransition = json_decode($rwTransitionOut, true);
+test('topic_ops transitions rewrite row to enable', is_array($rwTransition) && $rwTransition['ok'] === true && ($rwTransition['updated'] ?? 0) === 1 && ($rwTransition['rows'][0]['ctx_id'] ?? '') === $rwId && ($rwTransition['rows'][0]['status'] ?? '') === 'enable', $rwTransitionOut);
+test('rewrite row becomes normal topic after status enable', App\Services\RewriteService::byCtxId($rwId) === null && App\Repositories\TopicRepository::search('rewrite kw', 1, 20)['total'] === 1, json_encode(App\Repositories\TopicRepository::search('rewrite kw', 1, 20), JSON_UNESCAPED_UNICODE));
+test('rewrite service refuses to delete row after status enable', !App\Services\RewriteService::deleteByCtxId($rwId), '');
+App\Repositories\TopicRepository::export();
+$rwExportEnabled = (string)@file_get_contents($dataDir . '/topic_monitor_list.txt');
+test('topic export includes row after status enable', strpos($rwExportEnabled, 'rewrite kw') !== false, substr($rwExportEnabled, 0, 200));
+db("DELETE FROM sitetopic WHERE ctx_id IN ('{$rwId}', 'RWNORMAL001')");
 
 echo "\n========================================\n";
 echo "PASS: {$GLOBALS['pass']}  FAIL: {$GLOBALS['fail']}\n";

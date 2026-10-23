@@ -5,6 +5,7 @@ require __DIR__ . '/../app/bootstrap.php';
 
 use App\Config;
 use App\Database;
+use App\Services\RewriteService;
 use App\Support\Security;
 
 header('Access-Control-Allow-Origin: *');
@@ -41,7 +42,74 @@ if ($q === '') {
     return;
 }
 
+$status = isset($_GET['status']) ? strtolower(trim((string)$_GET['status'])) : 'enable';
+if (!in_array($status, ['enable', RewriteService::STATUS], true)) {
+    http_response_code(400);
+    echo 'FAIL: invalid status';
+    if (!defined('SOPS_TESTING')) { exit; }
+    return;
+}
+
+$format = isset($_GET['format']) ? strtolower(trim((string)$_GET['format'])) : 'txt';
+if (!in_array($format, ['txt', 'json'], true)) {
+    http_response_code(400);
+    echo 'FAIL: invalid format';
+    if (!defined('SOPS_TESTING')) { exit; }
+    return;
+}
+if ($format === 'json') {
+    header('Content-Type: application/json; charset=utf-8');
+}
+
+$emitTask = function (array $task, string $jsonRaw) use ($format): void {
+    if ($format === 'json') {
+        $json = json_decode($jsonRaw, true);
+        if (!is_array($json)) {
+            $json = [];
+        }
+        echo json_encode([
+            'ctx_id' => isset($task['ctx_id']) ? (string)$task['ctx_id'] : '',
+            'keyword' => isset($task['keyword']) ? (string)$task['keyword'] : '',
+            'status' => isset($task['status']) ? (string)$task['status'] : '',
+            'git_name' => isset($task['git_name']) ? (string)$task['git_name'] : '',
+            'domain' => isset($task['domain']) ? (string)$task['domain'] : '',
+            'pubdir' => isset($task['pubdir']) ? (string)$task['pubdir'] : '',
+            'lang' => isset($task['lang']) ? (string)$task['lang'] : '',
+            'json' => $json,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return;
+    }
+    echo implode('|', [
+        isset($task['ctx_id']) ? (string)$task['ctx_id'] : '',
+        isset($task['keyword']) ? (string)$task['keyword'] : '',
+        isset($task['status']) ? (string)$task['status'] : '',
+        isset($task['git_name']) ? (string)$task['git_name'] : '',
+        isset($task['domain']) ? (string)$task['domain'] : '',
+        isset($task['pubdir']) ? (string)$task['pubdir'] : '',
+        isset($task['lang']) ? (string)$task['lang'] : '',
+        $jsonRaw,
+    ]) . PHP_EOL;
+};
+
 $time = date('Ymd');
+
+if ($status === RewriteService::STATUS) {
+    $record = RewriteService::nextTask($q);
+    if ($record === null) {
+        if ($format === 'json') {
+            echo '{}';
+        }
+        if (!defined('SOPS_TESTING')) { exit; }
+        return;
+    }
+    $emitTask($record, RewriteService::jsonFor($record));
+    try {
+        RewriteService::markTaskDone($record);
+    } catch (\Throwable $e) {
+        error_log('rewritetask mark failed: ' . $e->getMessage());
+    }
+    return;
+}
 
 if ($q === 'all') {
     $rows = Database::fetchAll(
@@ -62,26 +130,17 @@ if ($q === 'all') {
 }
 
 if (empty($rows)) {
+    if ($format === 'json') {
+        echo '{}';
+    }
     if (!defined('SOPS_TESTING')) { exit; }
     return;
 }
 
 foreach ($rows as $row) {
-    $line = implode('|', [
-        (string)$row['ctx_id'],
-        (string)$row['keyword'],
-        (string)$row['status'],
-        (string)$row['git_name'],
-        (string)$row['domain'],
-        (string)$row['pubdir'],
-        (string)$row['lang'],
-        (string)$row['json'],
-    ]);
-    echo $line . PHP_EOL;
-
-    $responseArray = explode('|', $line);
-    $ctx_id = $responseArray[0];
-    $json = end($responseArray);
+    $ctx_id = (string)$row['ctx_id'];
+    $json = (string)$row['json'];
+    $emitTask($row, $json);
 
     $keywordData = json_decode($json, true);
     if (!is_array($keywordData)) {

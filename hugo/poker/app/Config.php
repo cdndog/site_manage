@@ -309,6 +309,16 @@ class Config
                 ],
             ],
             [
+                'title' => '改写管理',
+                'url' => 'rewriteops.php',
+                'icon' => 'bi-arrow-repeat',
+                'perm' => 'rewrite.view',
+                'children' => [
+                    ['title' => '新增改写', 'url' => 'rewriteops.php', 'icon' => 'bi-plus-circle', 'perm' => 'rewrite.manage'],
+                    ['title' => '改写列表', 'url' => 'rewritelist.php', 'icon' => 'bi-list-ul', 'perm' => 'rewrite.view'],
+                ],
+            ],
+            [
                 'title' => '文章管理',
                 'url' => 'article_new.php',
                 'icon' => 'bi-file-earmark-text',
@@ -392,6 +402,8 @@ class Config
             'keyword.manage' => ['name' => '关键词-录入编辑', 'description' => '新建/编辑/提交关键词'],
             'topic.view' => ['name' => '话题-查看', 'description' => '查看话题列表与报表'],
             'topic.manage' => ['name' => '话题-录入编辑', 'description' => '新建/编辑/提交话题'],
+            'rewrite.view' => ['name' => '改写-查看', 'description' => '查看改写管理'],
+            'rewrite.manage' => ['name' => '改写-录入编辑', 'description' => '新建/编辑/保存改写数据'],
             'article.view' => ['name' => '文章-查看', 'description' => '查看文章列表'],
             'article.manage' => ['name' => '文章-录入编辑', 'description' => '新建/编辑/保存文章'],
             'report.view' => ['name' => '报表-查看', 'description' => '查看 SEO 报表'],
@@ -413,8 +425,8 @@ class Config
     {
         return [
             'admin' => array_keys(self::permissions()),
-            'editor' => ['site.manage', 'site.view', 'keyword.manage', 'keyword.view', 'topic.manage', 'topic.view', 'article.manage', 'article.view', 'report.view'],
-            'viewer' => ['site.view', 'keyword.view', 'topic.view', 'article.view', 'report.view'],
+            'editor' => ['site.manage', 'site.view', 'keyword.manage', 'keyword.view', 'topic.manage', 'topic.view', 'rewrite.manage', 'rewrite.view', 'article.manage', 'article.view', 'report.view'],
+            'viewer' => ['site.view', 'keyword.view', 'topic.view', 'rewrite.view', 'article.view', 'report.view'],
         ];
     }
 

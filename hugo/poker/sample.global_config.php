@@ -6,6 +6,7 @@ return [
         'log_file' => 'editor_poker_allpost_list.txt',
         'log_files' => ['editor_okx_allpost_list.txt', 'editor_poker_allpost_list.txt'],
         'seoCommonFileName' => 'seocommon_poker_article_original.json',
+        'rewrite_files' => ['a', 'b'],
         // 'database' => 'sitedata.sqlite',
         'pg_dsn' => 'pgsql:host=127.0.0.1;port=5432;dbname=sitedb;user=postgres;password=NiceGame12#$',
         'imgbb_api_key' => [
