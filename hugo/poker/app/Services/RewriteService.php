@@ -688,9 +688,12 @@ class RewriteService
         return '';
     }
 
-    private static function siteLanguageGeo(array $site)
+    public static function siteLanguageGeo(array $site)
     {
         $lang = self::clean(isset($site['languages']) ? $site['languages'] : '');
+        if (strpos($lang, ',') !== false) {
+            $lang = trim((string)explode(',', $lang, 2)[0]);
+        }
         $geo = self::clean(isset($site['geo']) ? $site['geo'] : '');
         if ($geo === '' && isset($site['json'])) {
             $siteJson = json_decode((string)$site['json'], true);
@@ -704,9 +707,11 @@ class RewriteService
         return [$lang, $geo];
     }
 
-    public static function importFromArticleList($path, array $sites = [], $publishDomain = '')
+    public static function importFromArticleList($path, array $sites = [], $publishDomain = '', $importLang = '', $importGeo = '')
     {
         self::$sourceContentCache = null;
+        $importLang = self::clean($importLang);
+        $importGeo = self::clean($importGeo);
         $result = [
             'file' => (string)$path,
             'total' => 0,
@@ -742,6 +747,8 @@ class RewriteService
             return $result;
         }
         $result['file'] = $resolved;
+        $result['import_lang'] = $importLang;
+        $result['import_geo'] = $importGeo;
         $lines = file($resolved, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         if (!is_array($lines)) {
             $result['error'] = '文件读取失败：' . $resolved;
@@ -820,8 +827,16 @@ class RewriteService
                     }
                 }
             }
-            $lang = self::clean(isset($json['lang']) ? $json['lang'] : '');
-            $geo = self::clean(isset($json['geo']) ? $json['geo'] : '');
+            $lang = $importLang !== ''
+                ? $importLang
+                : self::clean(isset($json['lang']) ? $json['lang'] : '');
+            if ($importGeo !== '') {
+                $geo = $importGeo;
+            } elseif ($importLang !== '') {
+                $geo = self::geoForLang($importLang);
+            } else {
+                $geo = self::clean(isset($json['geo']) ? $json['geo'] : '');
+            }
             if ($lang === '' && $publishLang !== '') {
                 $lang = $publishLang;
             }

@@ -147,6 +147,11 @@ class RewriteController
         $order = isset($_GET['order']) ? (string)$_GET['order'] : 'desc';
         $result = RewriteService::search($search, $page, $perPage, $sort, $order);
         $importFiles = self::importFileList();
+        $sites = SiteRepository::all();
+        foreach ($sites as &$site) {
+            list($site['rewrite_lang'], $site['rewrite_geo']) = RewriteService::siteLanguageGeo($site);
+        }
+        unset($site);
         $payload = [
             'total' => $result['total'],
             'rows' => $result['rows'],
@@ -157,7 +162,9 @@ class RewriteController
             'can_manage' => Security::can('rewrite.manage'),
             'import_files' => $importFiles,
             'import_default_path' => count($importFiles) > 0 ? $importFiles[0] : (string)Config::baseKey('rewrite_article_list', ''),
-            'sites' => SiteRepository::all(),
+            'sites' => $sites,
+            'import_languages' => Config::get('languages', []),
+            'import_countries' => Config::get('countries', []),
         ];
         if (isset($_GET['format']) && $_GET['format'] === 'json') {
             self::emitJson($payload);
@@ -195,7 +202,9 @@ class RewriteController
             return;
         }
         $publishDomain = isset($_POST['publish_domain']) ? trim((string)$_POST['publish_domain']) : '';
-        $result = RewriteService::importFromArticleList($path, SiteRepository::all(), $publishDomain);
+        $importLang = isset($_POST['import_lang']) ? trim((string)$_POST['import_lang']) : '';
+        $importGeo = isset($_POST['import_geo']) ? trim((string)$_POST['import_geo']) : '';
+        $result = RewriteService::importFromArticleList($path, SiteRepository::all(), $publishDomain, $importLang, $importGeo);
         if (isset($result['error'])) {
             self::emitJson(['total' => 1, 'rows' => [['ok' => false, 'message' => $result['error']]]]);
             return;
@@ -203,6 +212,9 @@ class RewriteController
         $message = '导入完成：共 ' . $result['total'] . ' 行，新增 ' . $result['imported'] . ' 条，更新 ' . $result['updated'] . ' 条，跳过 ' . $result['skipped'] . ' 条，失败 ' . $result['failed'] . ' 条';
         if (!empty($result['publish_domain'])) {
             $message .= '；发布到 ' . $result['publish_domain'] . '(' . (isset($result['publish_git_name']) ? $result['publish_git_name'] : '') . ')';
+        }
+        if (!empty($result['import_lang']) || !empty($result['import_geo'])) {
+            $message .= '；优化语言 ' . (!empty($result['import_lang']) ? $result['import_lang'] : '-') . '，地区 ' . (!empty($result['import_geo']) ? $result['import_geo'] : '-');
         }
         if (count($result['errors']) > 0) {
             $message .= '；' . implode('；', array_slice($result['errors'], 0, 5));

@@ -177,7 +177,11 @@
         </button>
       </div>
       <div class="modal-body">
-        <?php $importFiles = isset($import_files) ? (array)$import_files : []; ?>
+        <?php
+        $importFiles = isset($import_files) ? (array)$import_files : [];
+        $importLanguages = isset($import_languages) ? (array)$import_languages : [];
+        $importCountries = isset($import_countries) ? (array)$import_countries : [];
+        ?>
         <div class="form-group">
           <label for="rewriteImportPath">文章列表文件</label>
 <?php if (count($importFiles) > 0): ?>
@@ -199,9 +203,14 @@
           <select class="form-control" id="rewriteImportDomain">
             <option value="">请选择发布域名</option>
             <?php foreach ($importSites as $site): ?>
-            <?php $siteDomain = isset($site['domain']) ? (string)$site['domain'] : ''; $siteGit = isset($site['git_name']) ? (string)$site['git_name'] : ''; ?>
+            <?php
+            $siteDomain = isset($site['domain']) ? (string)$site['domain'] : '';
+            $siteGit = isset($site['git_name']) ? (string)$site['git_name'] : '';
+            $siteLang = isset($site['rewrite_lang']) ? (string)$site['rewrite_lang'] : (isset($site['languages']) ? (string)$site['languages'] : '');
+            $siteGeo = isset($site['rewrite_geo']) ? (string)$site['rewrite_geo'] : '';
+            ?>
             <?php if ($siteDomain !== ''): ?>
-            <option value="<?php echo e($siteDomain); ?>"><?php echo e($siteDomain); ?><?php echo $siteGit !== '' ? '（' . e($siteGit) . '）' : ''; ?></option>
+            <option value="<?php echo e($siteDomain); ?>" data-lang="<?php echo e($siteLang); ?>" data-geo="<?php echo e($siteGeo); ?>"><?php echo e($siteDomain); ?><?php echo $siteGit !== '' ? '（' . e($siteGit) . '）' : ''; ?></option>
             <?php endif; ?>
             <?php endforeach; ?>
           </select>
@@ -211,11 +220,32 @@
           <small class="form-text text-muted">请先在站点管理中录入站点。</small>
 <?php endif; ?>
         </div>
+        <div class="form-row">
+          <div class="form-group col-6">
+            <label for="rewriteImportLang">语言</label>
+            <select class="form-control" id="rewriteImportLang">
+              <option value="">跟随文章/站点</option>
+              <?php foreach ($importLanguages as $label => $value): ?>
+              <option value="<?php echo e($value); ?>"><?php echo e($value); ?> (<?php echo e($label); ?>)</option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <div class="form-group col-6">
+            <label for="rewriteImportGeo">地区</label>
+            <select class="form-control" id="rewriteImportGeo">
+              <option value="">跟随文章/站点</option>
+              <?php foreach ($importCountries as $label => $value): ?>
+              <option value="<?php echo e($value); ?>"><?php echo e($value); ?> (<?php echo e($label); ?>)</option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+        </div>
+        <small class="form-text text-muted mt-n2 mb-2">默认取所选发布站点的语言与地区；选择后将作为导入改写文章的优化语言与地区。</small>
         <p class="small text-muted mb-1">文件每行格式：<code>ctx_id|url|json</code>（与文章列表日志一致）。</p>
         <ul class="mb-0 small text-muted">
           <li>改写关键词取文章标题；</li>
           <li>发布 git 与域名取所选发布域名对应站点，未选择时回退文章 URL 域名；</li>
-          <li>自动识别发布目录；语言、区域缺失时使用所选站点的语言与地区设定；状态设为 rewrite（待改写）；</li>
+          <li>自动识别发布目录；语言、地区默认取所选站点，也可手动调整，导入时写入改写记录；状态设为 rewrite（待改写）；</li>
           <li>已存在的 ctx_id 将跳过，不覆盖已有改写数据。</li>
         </ul>
       </div>
@@ -233,8 +263,17 @@
     var executeBtn = document.getElementById('rewriteImportExecuteBtn');
     var pathInput = document.getElementById('rewriteImportPath');
     var domainSelect = document.getElementById('rewriteImportDomain');
+    var langSelect = document.getElementById('rewriteImportLang');
+    var geoSelect = document.getElementById('rewriteImportGeo');
     if (!importBtn || !importModal || !executeBtn || !pathInput) { return; }
+    function syncImportLocale() {
+      var opt = domainSelect ? domainSelect.options[domainSelect.selectedIndex] : null;
+      if (langSelect) { langSelect.value = opt ? String(opt.getAttribute('data-lang') || '') : ''; }
+      if (geoSelect) { geoSelect.value = opt ? String(opt.getAttribute('data-geo') || '') : ''; }
+    }
+    if (domainSelect) { domainSelect.addEventListener('change', syncImportLocale); }
     importBtn.addEventListener('click', function () {
+      syncImportLocale();
       window.jQuery(importModal).modal('show');
     });
     executeBtn.addEventListener('click', function () {
@@ -278,7 +317,9 @@
         }
       };
       var publishDomain = domainSelect ? String(domainSelect.value || '') : '';
-      xhr.send('action=import-articles&import_path=' + encodeURIComponent(path) + '&publish_domain=' + encodeURIComponent(publishDomain) + '&csrf_token=' + encodeURIComponent(csrf));
+      var importLang = langSelect ? String(langSelect.value || '') : '';
+      var importGeo = geoSelect ? String(geoSelect.value || '') : '';
+      xhr.send('action=import-articles&import_path=' + encodeURIComponent(path) + '&publish_domain=' + encodeURIComponent(publishDomain) + '&import_lang=' + encodeURIComponent(importLang) + '&import_geo=' + encodeURIComponent(importGeo) + '&csrf_token=' + encodeURIComponent(csrf));
     });
   })();
 </script>

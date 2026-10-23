@@ -4567,6 +4567,10 @@ $rwFilesConfig = App\Config::baseKey('rewrite_files', []);
 $rwFirstFile = is_array($rwFilesConfig) && count($rwFilesConfig) > 0 ? (string)reset($rwFilesConfig) : '';
 test('rewritelist import exposes configured rewrite_files', $rwFirstFile !== '' && strpos($rwListEditorHtml, '<select class="form-control" id="rewriteImportPath"') !== false && strpos($rwListEditorHtml, $rwFirstFile) !== false, $rwFirstFile . ' / ' . substr($rwListEditorHtml, 0, 80));
 test('rewritelist import exposes siteops publish domain picker', strpos($rwListEditorHtml, 'id="rewriteImportDomain"') !== false && strpos($rwListEditorHtml, '发布到域名') !== false, substr($rwListEditorHtml, 0, 80));
+test('rewritelist import exposes language and region selectors', strpos($rwListEditorHtml, 'id="rewriteImportLang"') !== false && strpos($rwListEditorHtml, 'id="rewriteImportGeo"') !== false, substr($rwListEditorHtml, 0, 80));
+test('rewritelist import domain options carry site locale defaults', strpos($rwListEditorHtml, 'data-lang=') !== false && strpos($rwListEditorHtml, 'data-geo=') !== false && strpos($rwListEditorHtml, 'syncImportLocale') !== false, substr($rwListEditorHtml, 0, 80));
+$rwSiteLocale = App\Services\RewriteService::siteLanguageGeo(['languages' => 'zh,en', 'json' => '{}']);
+test('rewrite site locale defaults use first configured language', $rwSiteLocale === ['zh', 'CN'], json_encode($rwSiteLocale));
 
 $rwImportId = '17920894836ad11d8b5e900991146731';
 $rwImportUrl = 'https://www.example-rewrite.com/post/1';
@@ -4645,6 +4649,11 @@ test('rewrite import defaults missing lang to site language', is_array($rwTarget
 test('rewrite import defaults missing geo to site region', is_array($rwTargetRow) && $rwTargetRow['geo'] === 'JP', json_encode($rwTargetRow, JSON_UNESCAPED_UNICODE));
 test('rewrite import keeps explicitly set lang and geo', is_array($rwTargetKeepRow) && $rwTargetKeepRow['lang'] === 'en' && $rwTargetKeepRow['geo'] === 'US', json_encode($rwTargetKeepRow, JSON_UNESCAPED_UNICODE));
 test('rewrite import reports selected publish target', is_array($rwTargetImport) && strpos((string)($rwTargetImport['rows'][0]['message'] ?? ''), 'publish-rewrite.com(rw-publish)') !== false, json_encode($rwTargetImport, JSON_UNESCAPED_UNICODE));
+$rwTargetOverride = json_decode(runRequest([], ['action' => 'import-articles', 'import_path' => $rwTargetFile, 'publish_domain' => 'publish-rewrite.com', 'import_lang' => 'ko', 'import_geo' => 'KR', 'csrf_token' => 'uivision-key-1'], 'POST', [], '/rewritelist.php'), true);
+$rwTargetOverrideRow = App\Services\RewriteService::byCtxId($rwTargetId);
+$rwTargetKeepOverrideRow = App\Services\RewriteService::byCtxId($rwTargetKeepId);
+test('rewrite import applies selected language and region override', is_array($rwTargetOverrideRow) && $rwTargetOverrideRow['lang'] === 'ko' && $rwTargetOverrideRow['geo'] === 'KR' && is_array($rwTargetKeepOverrideRow) && $rwTargetKeepOverrideRow['lang'] === 'ko' && $rwTargetKeepOverrideRow['geo'] === 'KR', json_encode([$rwTargetOverrideRow, $rwTargetKeepOverrideRow], JSON_UNESCAPED_UNICODE));
+test('rewrite import reports selected optimization locale', is_array($rwTargetOverride) && strpos((string)($rwTargetOverride['rows'][0]['message'] ?? ''), '优化语言 ko') !== false && strpos((string)($rwTargetOverride['rows'][0]['message'] ?? ''), '地区 KR') !== false, json_encode($rwTargetOverride, JSON_UNESCAPED_UNICODE));
 $rwTargetInvalid = json_decode(runRequest([], ['action' => 'import-articles', 'import_path' => $rwTargetFile, 'publish_domain' => 'missing-rewrite-site.com', 'csrf_token' => 'uivision-key-1'], 'POST', [], '/rewritelist.php'), true);
 test('rewrite import rejects unknown publish domain', is_array($rwTargetInvalid) && ($rwTargetInvalid['rows'][0]['ok'] ?? true) === false && strpos((string)($rwTargetInvalid['rows'][0]['message'] ?? ''), 'siteops') !== false, json_encode($rwTargetInvalid, JSON_UNESCAPED_UNICODE));
 App\Services\RewriteService::deleteByCtxId($rwTargetId);
