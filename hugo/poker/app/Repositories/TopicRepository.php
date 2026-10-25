@@ -291,10 +291,10 @@ class TopicRepository
 
     private static function missingSiteWhere($search, $domain, $gitName)
     {
-        $where = ' WHERE NOT EXISTS ('
-            . 'SELECT 1 FROM "siteops" "s" WHERE '
-            . '((COALESCE("s"."git_name", \'\') <> \'\' AND LOWER(TRIM("s"."git_name")) = LOWER(TRIM(COALESCE("t"."domain", \'\')))) '
-            . 'OR (COALESCE("s"."domain", \'\') <> \'\' AND LOWER(TRIM("s"."domain")) = LOWER(TRIM(COALESCE("t"."domain", \'\')))))'
+        $where = ' WHERE LOWER(TRIM(COALESCE("t"."domain", \'\'))) NOT IN ('
+            . 'SELECT LOWER(TRIM("domain")) FROM "siteops" WHERE COALESCE("domain", \'\') <> \'\' '
+            . 'UNION '
+            . 'SELECT LOWER(TRIM("git_name")) FROM "siteops" WHERE COALESCE("git_name", \'\') <> \'\''
             . ')';
         $params = [];
         if ($search !== '') {

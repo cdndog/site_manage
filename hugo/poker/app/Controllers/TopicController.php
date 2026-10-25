@@ -450,14 +450,14 @@ class TopicController
 
     private static function checkData()
     {
-        list($page, $perPage) = self::pageParams(1000, 20);
         $search = isset($_GET['search']) ? trim((string)$_GET['search']) : '';
-        $sort = isset($_GET['sort']) ? (string)$_GET['sort'] : 'id';
-        $order = isset($_GET['order']) ? (string)$_GET['order'] : 'desc';
         $domain = isset($_GET['domain']) ? trim((string)$_GET['domain']) : '';
         $gitName = isset($_GET['git_name']) ? trim((string)$_GET['git_name']) : '';
-        $result = TopicRepository::searchMissingSiteDomain($search, $page, $perPage, $sort, $order, $domain, $gitName);
         if (isset($_GET['format']) && $_GET['format'] === 'json') {
+            list($page, $perPage) = self::pageParams(1000, 20);
+            $sort = isset($_GET['sort']) ? (string)$_GET['sort'] : 'id';
+            $order = isset($_GET['order']) ? (string)$_GET['order'] : 'desc';
+            $result = TopicRepository::searchMissingSiteDomain($search, $page, $perPage, $sort, $order, $domain, $gitName);
             if (!headers_sent()) {
                 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
                 header('Pragma: no-cache');
@@ -467,10 +467,6 @@ class TopicController
             return null;
         }
         return [
-            'rows' => $result['rows'],
-            'total' => $result['total'],
-            'page' => $page,
-            'per_page' => $perPage,
             'search' => $search,
             'domain' => $domain,
             'git_name' => $gitName,
