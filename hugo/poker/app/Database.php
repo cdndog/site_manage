@@ -21,6 +21,7 @@ class Database
         }
         self::$isPg = false;
         self::$migrated = false;
+        self::$migratedPg = false;
         \App\Support\Cache::reset();
     }
 

@@ -199,6 +199,7 @@ class RewriteService
         $today = date('Ymd');
         $isAll = $query === 'all';
         $candidates = [];
+        $handledToday = [];
         foreach (self::all() as $record) {
             if ((string)$record['status'] !== self::STATUS) {
                 continue;
@@ -207,10 +208,17 @@ class RewriteService
                 if ((string)$record['keyword'] === '') {
                     continue;
                 }
-            } elseif ((string)$record['lasttask'] === $today || !self::matchesTask($record, $query)) {
+            } elseif (!self::matchesTask($record, $query)) {
+                continue;
+            }
+            if ((string)$record['lasttask'] === $today) {
+                $handledToday[] = $record;
                 continue;
             }
             $candidates[] = $record;
+        }
+        if (count($candidates) === 0) {
+            $candidates = $handledToday;
         }
         if (count($candidates) === 0) {
             return null;

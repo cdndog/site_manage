@@ -306,6 +306,7 @@ class Config
                     ['title' => '新增话题', 'url' => 'topicops.php', 'icon' => 'bi-plus-circle', 'perm' => 'topic.manage'],
                     ['title' => '话题列表', 'url' => 'topiclist.php', 'icon' => 'bi-journal-richtext', 'perm' => 'topic.view'],
                     ['title' => '话题报表', 'url' => 'topictable.php', 'icon' => 'bi-bar-chart-line', 'perm' => 'topic.view'],
+                    ['title' => '数据排查', 'url' => 'topiccheck.php', 'icon' => 'bi-exclamation-triangle', 'perm' => 'topic.view'],
                 ],
             ],
             [

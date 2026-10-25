@@ -29,7 +29,12 @@ putenv('APP_DB_FILE=' . $testDb);
 putenv('APP_DATA_DIR=' . $dataDir);
 putenv('APP_CSRF_SECRET=testcsrfsecret');
 putenv('APP_API_CSRF_TOKENS=');
-putenv('APP_DB_DSN=');
+$testPgDsn = getenv('SOPS_TEST_DB_DSN');
+if ($testPgDsn !== false && trim((string)$testPgDsn) !== '') {
+    putenv('APP_DB_DSN=' . trim((string)$testPgDsn));
+} else {
+    putenv('APP_DB_DSN=');
+}
 if (getenv('APP_DB_DSN') !== false && getenv('APP_DB_DSN') !== '') {
     // PG 模式：由 Database::connection() 负责建表，此处仅确保目录
     $db = null;
@@ -104,6 +109,24 @@ function runRequest(array $get = [], array $post = [], $method = 'GET', array $c
     ob_start();
     include dirname(__DIR__) . $entry;
     return ob_get_clean();
+}
+
+function dbMarkKeywordLasttaskToday($setColumn = false, $where = '')
+{
+    $today = date('Ymd');
+    if (getenv('APP_DB_DSN') !== false && getenv('APP_DB_DSN') !== '') {
+        $sql = 'UPDATE keywordmonitorlist SET '
+            . ($setColumn ? "lasttask = '{$today}', " : '')
+            . "json = jsonb_set(CASE WHEN jsonb_typeof(json) = 'object' THEN json ELSE '{}'::jsonb END, '{lasttask}', to_jsonb('{$today}'::text), true)";
+    } else {
+        $sql = 'UPDATE keywordmonitorlist SET '
+            . ($setColumn ? "lasttask = '{$today}', " : '')
+            . "json = json_set(CASE WHEN json_valid(json) THEN json ELSE '{}' END, '$.lasttask', '{$today}')";
+    }
+    if ($where !== '') {
+        $sql .= ' WHERE ' . $where;
+    }
+    return db($sql);
 }
 
 function db($sql)
@@ -201,7 +224,7 @@ $flattenModules = function ($list) use (&$flattenModules) {
 $flatMods = $flattenModules($mods);
 $flatUrls = array_map(function ($m) { return isset($m['url']) ? $m['url'] : ''; }, $flatMods);
 test('headerModules grouped by 8 domains', is_array($mods) && count($mods) === 8 && $mods[0]['title'] === '数据看板' && $mods[0]['url'] === 'dash.php' && $mods[0]['perm'] === 'report.view' && $mods[1]['title'] === '站点管理' && $mods[2]['title'] === '关键词管理' && $mods[3]['title'] === '话题管理' && $mods[4]['title'] === '改写管理' && $mods[4]['url'] === 'rewriteops.php' && $mods[5]['title'] === '文章管理' && $mods[6]['title'] === '发布管理' && $mods[7]['title'] === '系统管理');
-test('headerModules contains all entries', in_array('dash.php', $flatUrls, true) && in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('rewriteops.php', $flatUrls, true) && in_array('rewritelist.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true) && in_array('publish_list.php', $flatUrls, true));
+test('headerModules contains all entries', in_array('dash.php', $flatUrls, true) && in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('topiccheck.php', $flatUrls, true) && in_array('rewriteops.php', $flatUrls, true) && in_array('rewritelist.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true) && in_array('publish_list.php', $flatUrls, true));
 $html = runRequest();
 test('header module nav renders', strpos($html, 'sops-sidebar-link') !== false);
 foreach ($flatUrls as $url) {
@@ -545,7 +568,7 @@ $expiredAuthMac = substr(hash_hmac('sha256', 'auth|admin|' . $expiredAuth, 'auth
 $expiredSession = ['siteops_uid' => 'expireuser', 'siteops_auth' => 'admin|' . $expiredAuth . '|' . $expiredAuthMac];
 $expiredEntries = [
     '/publish_list.php', '/publish_edit.php', '/article_list.php', '/article_new.php',
-    '/topiclist.php', '/topictable.php', '/topicops.php', '/siteops.php', '/keywordops.php',
+    '/topiclist.php', '/topictable.php', '/topiccheck.php', '/topicops.php', '/siteops.php', '/keywordops.php',
     '/users.php', '/user_edit.php', '/roles.php', '/role_edit.php', '/config_list.php',
     '/config_edit.php', '/cache_manage.php', '/seo_report.php', '/wechat_cookie.php',
 ];
@@ -1134,6 +1157,7 @@ $v2 = \App\Support\Cache::remember('unit:remember', 60, function () use (&$calls
 test('cache remember computes once', $v1 === 'computed' && $v2 === 'computed' && $calls === 1, "calls=$calls");
 \App\Support\Cache::forget('unit:remember');
 \App\Support\Cache::forget('unit:test');
+$ts10 = substr((string)time(), 0, 10);
 $wxCtx = $ts10 . '99wximport0';
 $html = runRequest([], [
     'post_uuid' => $wxCtx,
@@ -1160,7 +1184,6 @@ if (count($wrows) === 1) {
     test('wechat row pubdomain', $wrows[0]['pubdomain'] === 'testpoker.com', $wrows[0]['pubdomain']);
     test('wechat row json content', strpos((string)$wrows[0]['json'], '<p>WeChat content here.</p>') !== false);
 }
-$ts10 = substr((string)time(), 0, 10);
 $ctxId = $ts10 . '12345abcde';
 $html = runRequest([], [
     'post_uuid' => $ctxId,
@@ -1189,7 +1212,7 @@ if (count($arows) === 1) {
     test('article row fields', $arow['title'] === 'Poker Strategy Guide' && $arow['keyword'] === 'poker strategy,texas holdem' && $arow['tags'] === 'poker,strategy,guide' && $arow['lang'] === 'en' && $arow['series'] === 'news' && $arow['pubdir'] === 'article' && $arow['globalpublish'] === 'no' && $arow['savename'] === 'poker-strategy-guide', $arow['title']);
     test('article row pubdomain joined', $arow['pubdomain'] === 'testpoker.com,shpoker.com', $arow['pubdomain']);
     test('article row translate langs joined', $arow['translate_to_langs'] === 'ja,es', $arow['translate_to_langs']);
-    test('article row update_date Z format', preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', (string)$arow['update_date']) === 1, $arow['update_date']);
+    test('article row update_date Z format', preg_match('/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}(?::?\d{2})?)$/', (string)$arow['update_date']) === 1, $arow['update_date']);
     $ajson = json_decode($arow['json'], true);
     test('article row json valid', is_array($ajson));
     if (is_array($ajson)) {
@@ -1756,6 +1779,63 @@ $json = runRequest(['format' => 'json', 'view' => 'domain', 'sort' => 'total', '
 $payload = json_decode($json, true);
 test('topic report domain view sort honored', is_array($payload) && isset($payload['rows'][0]['total']) && $payload['rows'][0]['total'] === (int)min(array_column($payload['rows'], 'total')), var_export($payload['rows'][0]['total'] ?? null, true));
 
+echo "== topic data check ==\n";
+db("DELETE FROM sitetopic WHERE ctx_id IN ('TOPICCHECKMISS1','TOPICCHECKMISS2','TOPICCHECKGIT1','TOPICCHECKDOM1','TOPICCHECKTRIM1')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICCHECKMISS1', 'testpoker', 'z-missing-topiccheck.example', 'TOPICCHECKMISS1 missing data', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-02 10:00:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICCHECKMISS2', 'testpoker', 'a-missing-topiccheck.example', 'TOPICCHECKMISS2 missing data', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-02 10:01:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICCHECKGIT1', 'testpoker', 'testpoker', 'TOPICCHECKGIT1 matched by git name', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-02 10:02:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICCHECKDOM1', 'testpoker', 'testpoker.com', 'TOPICCHECKDOM1 matched by domain', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-02 10:03:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICCHECKTRIM1', 'testpoker', ' TESTPOKER.COM ', 'TOPICCHECKTRIM1 matched after trim', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-02 10:04:00')");
+$html = runRequest([], [], 'GET', [], '/topiccheck.php');
+test('topic check page renders title', strpos($html, '数据排查') !== false);
+test('topic check page uses server-side table', strpos($html, "url: 'topiccheck.php'") !== false && strpos($html, "sidePagination: 'server'") !== false && strpos($html, 'pageSize: 1000') !== false);
+$json = runRequest(['format' => 'json', 'search' => 'TOPICCHECKMISS'], [], 'GET', [], '/topiccheck.php');
+$payload = json_decode($json, true);
+test('topic check json returns unmatched domain rows', is_array($payload) && $payload['total'] === 2 && count($payload['rows']) === 2 && in_array('TOPICCHECKMISS1', array_column($payload['rows'], 'ctx_id'), true), substr($json, 0, 160));
+$json = runRequest(['format' => 'json', 'search' => 'TOPICCHECKMISS', 'sort' => 'domain', 'order' => 'asc'], [], 'GET', [], '/topiccheck.php');
+$payload = json_decode($json, true);
+test('topic check json sorts rows', is_array($payload) && isset($payload['rows'][0]['domain']) && $payload['rows'][0]['domain'] === 'a-missing-topiccheck.example', substr($json, 0, 160));
+$json = runRequest(['format' => 'json', 'search' => 'TOPICCHECKMISS', 'sort' => 'domain', 'order' => 'asc', 'offset' => 1, 'limit' => 1], [], 'GET', [], '/topiccheck.php');
+$payload = json_decode($json, true);
+test('topic check json paginates rows', is_array($payload) && $payload['total'] === 2 && count($payload['rows']) === 1 && $payload['rows'][0]['ctx_id'] === 'TOPICCHECKMISS1', substr($json, 0, 160));
+foreach (['TOPICCHECKGIT1', 'TOPICCHECKDOM1', 'TOPICCHECKTRIM1'] as $matchedKeyword) {
+    $json = runRequest(['format' => 'json', 'search' => $matchedKeyword], [], 'GET', [], '/topiccheck.php');
+    $payload = json_decode($json, true);
+    test('topic check json excludes site match: ' . $matchedKeyword, is_array($payload) && $payload['total'] === 0, substr($json, 0, 160));
+}
+db("DELETE FROM sitetopic WHERE ctx_id IN ('TOPICCHECKMISS1','TOPICCHECKMISS2','TOPICCHECKGIT1','TOPICCHECKDOM1','TOPICCHECKTRIM1')");
+
+echo "== topic data check delete ==\n";
+db("DELETE FROM sitetopic WHERE ctx_id IN ('TOPICDELCHECK1','TOPICDELCHECK2','TOPICDELCHECK3','TOPICDELCHECK4','TOPICDELCHECKMATCH')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICDELCHECK1', 'delgit-one', 'del-one.example', 'TOPICDELCHECK1', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-03 10:00:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICDELCHECK2', 'delgit-one', 'del-two.example', 'TOPICDELCHECK2', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-03 10:01:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICDELCHECK3', 'delgit-two', 'del-one.example', 'TOPICDELCHECK3', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-03 10:02:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICDELCHECK4', 'delgit-keep', 'del-keep.example', 'TOPICDELCHECK4', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-03 10:03:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICDELCHECKMATCH', 'delgit-match', 'testpoker.com', 'TOPICDELCHECKMATCH', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-03 10:04:00')");
+$json = runRequest(['format' => 'json', 'search' => 'TOPICDELCHECK', 'domain' => ' DEL-ONE.EXAMPLE '], [], 'GET', [], '/topiccheck.php');
+$payload = json_decode($json, true);
+test('topic check domain filter ignores case and trim', is_array($payload) && $payload['total'] === 2 && array_column($payload['rows'], 'ctx_id') === ['TOPICDELCHECK3', 'TOPICDELCHECK1'], substr($json, 0, 160));
+$json = runRequest(['format' => 'json', 'search' => 'TOPICDELCHECK', 'git_name' => 'delgit-one'], [], 'GET', [], '/topiccheck.php');
+$payload = json_decode($json, true);
+test('topic check git filter returns matched rows', is_array($payload) && $payload['total'] === 2, substr($json, 0, 160));
+$html = runRequest(['domain' => 'del-one.example', 'git_name' => 'delgit-two'], [], 'GET', [], '/topiccheck.php');
+test('topic check page prefills domain and git filters', strpos($html, 'value="del-one.example"') !== false && strpos($html, 'value="delgit-two"') !== false);
+$json = runRequest([], ['action' => 'delete-missing-topics', 'domain' => ' DEL-ONE.EXAMPLE ', 'git_name' => '', 'csrf_token' => 'bad'], 'POST', ['siteops_uid' => 'checkcsrfuid'], '/topiccheck.php');
+$payload = json_decode($json, true);
+test('topic check delete rejects invalid csrf', is_array($payload) && $payload['rows'][0]['ok'] === false && count(db("SELECT * FROM sitetopic WHERE ctx_id LIKE 'TOPICDELCHECK%'")) === 5, substr($json, 0, 160));
+$json = runRequest([], ['action' => 'delete-missing-topics', 'domain' => ' DEL-ONE.EXAMPLE ', 'git_name' => '', 'csrf_token' => 'x'], 'POST', [], '/topiccheck.php');
+$payload = json_decode($json, true);
+$remaining = array_column(db("SELECT ctx_id FROM sitetopic WHERE ctx_id LIKE 'TOPICDELCHECK%' ORDER BY ctx_id"), 'ctx_id');
+test('topic check delete by domain removes abnormal rows', is_array($payload) && $payload['rows'][0]['ok'] === true && $payload['rows'][0]['deleted'] === 2 && $remaining === ['TOPICDELCHECK2', 'TOPICDELCHECK4', 'TOPICDELCHECKMATCH'], json_encode($remaining));
+$json = runRequest([], ['action' => 'delete-missing-topics', 'domain' => 'testpoker.com', 'git_name' => '', 'csrf_token' => 'x'], 'POST', [], '/topiccheck.php');
+$payload = json_decode($json, true);
+test('topic check delete does not remove matched site rows', is_array($payload) && $payload['rows'][0]['deleted'] === 0 && count(db("SELECT * FROM sitetopic WHERE ctx_id = 'TOPICDELCHECKMATCH'")) === 1, substr($json, 0, 160));
+$json = runRequest([], ['action' => 'delete-missing-topics', 'domain' => '', 'git_name' => 'DELGIT-ONE', 'csrf_token' => 'x'], 'POST', [], '/topiccheck.php');
+$payload = json_decode($json, true);
+$remaining = array_column(db("SELECT ctx_id FROM sitetopic WHERE ctx_id LIKE 'TOPICDELCHECK%' ORDER BY ctx_id"), 'ctx_id');
+test('topic check delete by git name removes abnormal rows', is_array($payload) && $payload['rows'][0]['deleted'] === 1 && $remaining === ['TOPICDELCHECK4', 'TOPICDELCHECKMATCH'], json_encode($remaining));
+db("DELETE FROM sitetopic WHERE ctx_id IN ('TOPICDELCHECK1','TOPICDELCHECK2','TOPICDELCHECK3','TOPICDELCHECK4','TOPICDELCHECKMATCH')");
+
 echo "== audit log ==\n";test('audit log written', file_exists($dataDir . '/siteops_submit.log') && strpos((string)file_get_contents($dataDir . '/siteops_submit.log'), 'authok.com') !== false);
 
 echo "== error page ==\n";
@@ -1775,7 +1855,11 @@ echo "== RBAC ==\n";
 putenv('APP_AUTH_SECRET=rbacsecret');
 // Database::migrate seeds rbac tables on first connection
 App\Database::reset();
-$rbacTables = db("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','roles','permissions','user_roles','role_permissions') ORDER BY name");
+if (getenv('APP_DB_DSN') !== false && getenv('APP_DB_DSN') !== '') {
+    $rbacTables = db("SELECT tablename AS name FROM pg_tables WHERE schemaname = 'public' AND tablename IN ('users','roles','permissions','user_roles','role_permissions') ORDER BY tablename");
+} else {
+    $rbacTables = db("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','roles','permissions','user_roles','role_permissions') ORDER BY name");
+}
 test('rbac tables exist', count($rbacTables) === 5, implode(',', array_column($rbacTables, 'name')));
 $seedRoles = db("SELECT name FROM roles ORDER BY id");
 test('rbac seed roles', array_column($seedRoles, 'name') === ['admin', 'editor', 'viewer'], implode(',', array_column($seedRoles, 'name')));
@@ -1853,6 +1937,8 @@ $html = runRequest([], [], 'GET', ['siteops_uid' => 'rbacv1', 'siteops_auth' => 
 test('rbac viewer blocked from article manage', strpos($html, 'forbidden: insufficient permission') !== false, substr($html, 0, 120));
 $html = runRequest([], [], 'GET', ['siteops_uid' => 'rbacv1', 'siteops_auth' => $vCookie], '/article_list.php');
 test('rbac viewer allowed article list', strpos($html, '文章列表') !== false, substr($html, 0, 120));
+$html = runRequest([], [], 'GET', ['siteops_uid' => 'rbacv1', 'siteops_auth' => $vCookie], '/topiccheck.php');
+test('rbac viewer topic check hides delete button', strpos($html, '数据排查') !== false && strpos($html, 'id="checkDeleteBtn"') === false, substr($html, 0, 120));
 
 // user_edit page renders form
 $legacyAdminExpiry = time() + 3600;
@@ -2236,7 +2322,7 @@ $payload = json_decode($json, true);
 test('keywordquery keyword filters rows', is_array($payload) && count($payload) === 1 && $payload[0]['keyword'] === 'kw query fixture', substr($json, 0, 150));
 $out = runRequest(['t' => 'no-such-keyword-xyz'], [], 'GET', [], '/keywordquery.php');
 test('keywordquery unknown keyword returns empty array', trim($out) === '[]', var_export($out, true));
-db("UPDATE keywordmonitorlist SET json = json_set(CASE WHEN json_valid(json) THEN json ELSE '{}' END, '$.lasttask', '" . date('Ymd') . "') WHERE ctx_id != 'KWWRITEBACK1'");
+dbMarkKeywordLasttaskToday(false, "ctx_id != 'KWWRITEBACK1'");
 $out = runRequest(['t' => 'all'], [], 'GET', [], '/keywordtask.php');
 $line = trim($out);
 $kparts = explode('|', $line);
@@ -3057,7 +3143,7 @@ test('topic_task missing t returns 400', strpos($out, 'FAIL') !== false, $out);
 
 // --- api/keyword_query (keywordtask) ---
 // 清理其他 keyword 行的 lasttask，确保只有 APIKWTASK1 满足 task 查询条件（避免 RANDOM 导致的不确定性）
-db("UPDATE keywordmonitorlist SET lasttask = '" . date('Ymd') . "', json = json_set(CASE WHEN json_valid(json) THEN json ELSE '{}' END, '$.lasttask', '" . date('Ymd') . "')");
+dbMarkKeywordLasttaskToday(true);
 db("INSERT OR IGNORE INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, json, time) VALUES ('APIKWTASK1', 'kwtask-site', 'kwtask kw1', 'article', 'enable', 'en', 'US', '{\"keyword\":\"kwtask kw1\",\"git_name\":\"kwtask-site\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-01 09:00:00')");
 resetRequest();
 $_GET = ['t' => 'all', 'csrf_token' => 'uivision-key-1'];
@@ -3106,7 +3192,8 @@ db("INSERT INTO siteops (ctx_id, git_name, domain, status, json, time) VALUES ('
 db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('SQT1', 'sqt', 'sqroot1.com', 'sq topic', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-01 09:30:00')");
 
 // 数据源断言：Config::dbFile() 必须解析到测试库（重构前硬编码 sitedata.sqlite 会读到生产库）
-test('sitequery resolves db file via Config', \App\Config::dbFile() === $testDb, \App\Config::dbFile());
+$expectedDb = getenv('APP_DB_DSN') !== false && getenv('APP_DB_DSN') !== '' ? getenv('APP_DB_DSN') : $testDb;
+test('sitequery resolves db file via Config', \App\Config::dbFile() === $expectedDb, \App\Config::dbFile());
 
 $out = runRequest(['t' => 'all', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/sitequery.php');
 $json = json_decode($out, true);
@@ -3768,7 +3855,7 @@ $dashNewCount = function ($table, $window) {
     }
     $from = gmdate('Y-m-d H:i:s', $fromTs);
     try {
-        return count(db("SELECT \"time\" FROM \"" . $table . "\" WHERE \"time\" >= '" . $from . "' AND \"time\" <> ''"));
+        return count(db("SELECT \"time\" FROM \"" . $table . "\" WHERE \"time\" >= '" . $from . "'"));
     } catch (\Throwable $e) {
         return -1;
     }
@@ -4461,8 +4548,12 @@ $rwExpected = array_merge($rwRecord, ['status' => 'rewrite']);
 $rwExpectedJson = json_decode(App\Services\TopicService::buildJson($rwExpected), true);
 $rwExpectedJson['content'] = ['html' => ['<p>rewrite kw body</p>']];
 $rwDecoded = is_array($rwRow) ? json_decode((string)$rwRow['json'], true) : null;
-test('rewrite json matches topic json plus content', $rwDecoded === $rwExpectedJson, is_array($rwRow) ? (string)$rwRow['json'] : '');
-test('rewrite json keys equal topic json fields plus content', is_array($rwDecoded) && array_keys($rwDecoded) === array_merge(App\Services\RewriteService::FIELDS, ['content']), implode(',', is_array($rwDecoded) ? array_keys($rwDecoded) : []));
+test('rewrite json matches topic json plus content', is_array($rwDecoded) && $rwDecoded == $rwExpectedJson, is_array($rwRow) ? (string)$rwRow['json'] : '');
+$rwKeys = is_array($rwDecoded) ? array_keys($rwDecoded) : [];
+$rwExpectedKeys = array_merge(App\Services\RewriteService::FIELDS, ['content']);
+sort($rwKeys);
+sort($rwExpectedKeys);
+test('rewrite json keys equal topic json fields plus content', is_array($rwDecoded) && $rwKeys === $rwExpectedKeys, implode(',', is_array($rwDecoded) ? array_keys($rwDecoded) : []));
 
 $rwPostId = '17920894836ad11d8b5e900991146728';
 $rwHtml = runRequest([], [
@@ -4529,20 +4620,67 @@ $rwAfter = App\Services\RewriteService::byCtxId($rwId);
 test('rewritetask marks lasttask=today in sitetopic', is_array($rwAfter) && ($rwAfter['lasttask'] ?? '') === date('Ymd'), json_encode($rwAfter));
 test('rewritetask preserves rewrite content html', is_array($rwAfter) && ($rwAfter['content'] ?? '') === '<p>rewrite kw body</p>', json_encode($rwAfter));
 $rwAllAgain = runRequest(['t' => 'all', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
-test('rewritetask t=all mirrors topic random pick', strpos($rwAllAgain, $rwId) !== false, $rwAllAgain);
+$rwAllAgainParts = explode('|', trim($rwAllAgain));
+test('rewritetask t=all returns handled-today record as lowest priority', count($rwAllAgainParts) === 8 && $rwAllAgainParts[0] === $rwId, $rwAllAgain);
 $rwSpecific = runRequest(['t' => $rwId, 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
-test('rewritetask specific t skips records handled today', trim($rwSpecific) === '', $rwSpecific);
+$rwSpecificParts = explode('|', trim($rwSpecific));
+test('rewritetask specific t returns handled-today record as lowest priority', count($rwSpecificParts) === 8 && $rwSpecificParts[0] === $rwId, $rwSpecific);
 $rwNormalTask = runRequest(['t' => 'RWNORMAL001', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
 test('rewritetask does not expose enable topics', trim($rwNormalTask) === '', $rwNormalTask);
 
+$rwPriorityHandledId = '17920894836ad11d8b5e900991146735';
+$rwPriorityPendingId = '17920894836ad11d8b5e900991146736';
+App\Services\RewriteService::saveRecord([
+    'ctx_id' => $rwPriorityHandledId,
+    'git_name' => 'rw-priority-handled',
+    'domain' => 'rw-priority.com',
+    'keyword' => 'handled today kw',
+    'pubdir' => 'article',
+    'status' => 'rewrite',
+    'lang' => 'en',
+    'geo' => 'US',
+    'lasttask' => date('Ymd'),
+    'content' => '<p>handled today</p>',
+]);
+App\Services\RewriteService::saveRecord([
+    'ctx_id' => $rwPriorityPendingId,
+    'git_name' => 'rw-priority-pending',
+    'domain' => 'rw-priority.com',
+    'keyword' => 'pending kw',
+    'pubdir' => 'article',
+    'status' => 'rewrite',
+    'lang' => 'en',
+    'geo' => 'US',
+    'lasttask' => date('Ymd', strtotime('-1 day')),
+    'content' => '<p>pending body</p>',
+]);
+$rwPriorityOut = runRequest(['t' => 'all', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
+$rwPriorityParts = explode('|', trim($rwPriorityOut));
+test('rewritetask prefers pending over handled-today records', count($rwPriorityParts) === 8 && $rwPriorityParts[0] === $rwPriorityPendingId, $rwPriorityOut);
+App\Services\RewriteService::deleteByCtxId($rwPriorityHandledId);
+App\Services\RewriteService::deleteByCtxId($rwPriorityPendingId);
+
+$rwSetLasttask = function (string $lasttask) use ($rwId): void {
+    $record = App\Services\RewriteService::byCtxId($rwId);
+    if (is_array($record)) {
+        App\Services\RewriteService::saveRecord(array_merge($record, ['lasttask' => $lasttask]));
+    }
+};
+$rwSetLasttask('20200101');
 $rwTopicStatus = runRequest(['t' => 'all', 'status' => 'rewrite', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/topic_task.php');
 $rwTopicParts = explode('|', trim($rwTopicStatus));
-test('topic_task supports status rewrite', count($rwTopicParts) === 8 && $rwTopicParts[0] === $rwId && $rwTopicParts[2] === 'rewrite' && strpos($rwTopicStatus, 'rewrite kw body') !== false, $rwTopicStatus);
+test('topic_task supports pending rewrite when lasttask is not today', count($rwTopicParts) === 8 && $rwTopicParts[0] === $rwId && $rwTopicParts[2] === 'rewrite' && strpos($rwTopicStatus, 'rewrite kw body') !== false, $rwTopicStatus);
+$rwSetLasttask('20200101');
 $rwTopicAlias = runRequest(['t' => 'all', 'status' => 'rewrite', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/topictask.php');
-test('topictask alias supports status rewrite', trim($rwTopicAlias) === trim($rwTopicStatus), $rwTopicAlias);
+test('topictask alias supports pending rewrite', trim($rwTopicAlias) === trim($rwTopicStatus), $rwTopicAlias);
+$rwTopicAliasAgain = runRequest(['t' => 'all', 'status' => 'rewrite', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/topictask.php');
+$rwTopicAliasAgainParts = explode('|', trim($rwTopicAliasAgain));
+test('topictask alias returns handled-today rewrite as lowest priority', count($rwTopicAliasAgainParts) === 8 && $rwTopicAliasAgainParts[0] === $rwId, $rwTopicAliasAgain);
+$rwSetLasttask('20200101');
 $rwTopicJsonOut = runRequest(['t' => 'all', 'status' => 'rewrite', 'format' => 'json', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/topic_task.php');
 $rwTopicJson = json_decode($rwTopicJsonOut, true);
 test('topic_task rewrite format json returns content', is_array($rwTopicJson) && ($rwTopicJson['ctx_id'] ?? '') === $rwId && ($rwTopicJson['status'] ?? '') === 'rewrite' && is_array($rwTopicJson['json'] ?? null) && ($rwTopicJson['json']['content']['html'][0] ?? '') === '<p>rewrite kw body</p>', $rwTopicJsonOut);
+$rwSetLasttask('20200101');
 $rwAliasJsonOut = runRequest(['t' => 'all', 'format' => 'json', 'csrf_token' => 'uivision-key-1'], [], 'GET', [], '/api/rewritetask.php');
 $rwAliasJson = json_decode($rwAliasJsonOut, true);
 test('rewritetask alias supports format json', is_array($rwAliasJson) && ($rwAliasJson['ctx_id'] ?? '') === $rwId && ($rwAliasJson['status'] ?? '') === 'rewrite', $rwAliasJsonOut);

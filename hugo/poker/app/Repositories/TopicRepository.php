@@ -251,6 +251,71 @@ class TopicRepository
         ];
     }
 
+    public static function searchMissingSiteDomain($search, $page, $perPage, $sort = 'id', $order = 'desc', $domain = '', $gitName = '')
+    {
+        self::ensureTable();
+        list($where, $params) = self::missingSiteWhere($search, $domain, $gitName);
+        $orderBy = ' ORDER BY "t"."id" DESC';
+        if (in_array($sort, self::SORTABLE, true)) {
+            $direction = strtolower((string)$order) === 'asc' ? 'ASC' : 'DESC';
+            $orderBy = ' ORDER BY "t"."' . $sort . '" ' . $direction . ', "t"."id" DESC';
+        }
+        $total = Database::fetchOne('SELECT COUNT(*) AS "c" FROM "sitetopic" "t"' . $where, $params);
+        $page = max(1, (int)$page);
+        $perPage = max(1, (int)$perPage);
+        $offset = ($page - 1) * $perPage;
+        $rows = Database::fetchAll(
+            'SELECT "t"."id", "t"."ctx_id", "t"."git_name", "t"."domain", "t"."keyword", "t"."pubdir", "t"."status", "t"."lang", "t"."geo", "t"."lasttask", "t"."time"'
+            . ' FROM "sitetopic" "t"' . $where . $orderBy . ' LIMIT ' . (int)$perPage . ' OFFSET ' . (int)$offset,
+            $params
+        );
+        return [
+            'rows' => $rows,
+            'total' => isset($total['c']) ? (int)$total['c'] : 0,
+        ];
+    }
+
+    public static function deleteMissingSiteDomain($search = '', $domain = '', $gitName = '')
+    {
+        self::ensureTable();
+        list($where, $params) = self::missingSiteWhere($search, $domain, $gitName);
+        $deleted = (int)Database::execute(
+            'DELETE FROM "sitetopic" WHERE "id" IN (SELECT "t"."id" FROM "sitetopic" "t"' . $where . ')',
+            $params
+        );
+        if ($deleted > 0) {
+            Cache::forget('topic:summarize');
+        }
+        return $deleted;
+    }
+
+    private static function missingSiteWhere($search, $domain, $gitName)
+    {
+        $where = ' WHERE NOT EXISTS ('
+            . 'SELECT 1 FROM "siteops" "s" WHERE '
+            . '((COALESCE("s"."git_name", \'\') <> \'\' AND LOWER(TRIM("s"."git_name")) = LOWER(TRIM(COALESCE("t"."domain", \'\')))) '
+            . 'OR (COALESCE("s"."domain", \'\') <> \'\' AND LOWER(TRIM("s"."domain")) = LOWER(TRIM(COALESCE("t"."domain", \'\')))))'
+            . ')';
+        $params = [];
+        if ($search !== '') {
+            $where .= ' AND (LOWER("t"."keyword") LIKE LOWER(:kw) OR LOWER("t"."domain") LIKE LOWER(:kw)'
+                . ' OR LOWER("t"."git_name") LIKE LOWER(:kw) OR LOWER("t"."pubdir") LIKE LOWER(:kw)'
+                . ' OR LOWER("t"."status") LIKE LOWER(:kw) OR LOWER("t"."lang") LIKE LOWER(:kw)'
+                . ' OR LOWER("t"."geo") LIKE LOWER(:kw) OR LOWER("t"."lasttask") LIKE LOWER(:kw)'
+                . ' OR LOWER("t"."ctx_id") LIKE LOWER(:kw))';
+            $params['kw'] = '%' . $search . '%';
+        }
+        if ($domain !== '') {
+            $where .= ' AND LOWER(TRIM(COALESCE("t"."domain", \'\'))) = LOWER(TRIM(:domain))';
+            $params['domain'] = $domain;
+        }
+        if ($gitName !== '') {
+            $where .= ' AND LOWER(TRIM(COALESCE("t"."git_name", \'\'))) = LOWER(TRIM(:git_name))';
+            $params['git_name'] = $gitName;
+        }
+        return [$where, $params];
+    }
+
     public static function summarize()
     {
         return Cache::remember('topic:summarize', 60, function () {

@@ -390,6 +390,82 @@ class TopicController
         ];
     }
 
+    public static function dispatchCheck()
+    {
+        try {
+            Security::requireApiToken(true);
+            Security::requirePermission('topic.view');
+            $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+            if ($method === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete-missing-topics') {
+                self::handleMissingTopicsDelete();
+                return;
+            }
+            $data = self::checkData();
+            if ($data === null) {
+                return;
+            }
+            self::shell('数据排查', 'topic_check', $data);
+        } catch (\Throwable $e) {
+            renderErrorPage($e);
+        }
+    }
+
+    private static function handleMissingTopicsDelete()
+    {
+        Security::requirePermission('topic.manage');
+        if (!Security::csrfVerify(Security::requestToken())) {
+            self::emitJson(['total' => 0, 'rows' => [['ok' => false, 'message' => 'CSRF token invalid']]]);
+            return;
+        }
+        $domain = isset($_POST['domain']) ? trim((string)$_POST['domain']) : '';
+        $gitName = isset($_POST['git_name']) ? trim((string)$_POST['git_name']) : '';
+        $deleted = TopicRepository::deleteMissingSiteDomain('', $domain, $gitName);
+        try {
+            TopicService::export();
+        } catch (\Throwable $e) {
+            // 导出失败不影响已完成的删除
+        }
+        $filters = [];
+        if ($domain !== '') {
+            $filters[] = '域名=' . $domain;
+        }
+        if ($gitName !== '') {
+            $filters[] = 'GIT=' . $gitName;
+        }
+        $scope = count($filters) > 0 ? implode('，', $filters) : '全部异常话题';
+        self::emitJson(['total' => 1, 'rows' => [[
+            'ok' => true,
+            'message' => "已删除 {$deleted} 条异常话题（{$scope}）",
+            'deleted' => $deleted,
+        ]]]);
+    }
+
+    private static function checkData()
+    {
+        list($page, $perPage) = self::pageParams(1000, 1000);
+        $search = isset($_GET['search']) ? trim((string)$_GET['search']) : '';
+        $sort = isset($_GET['sort']) ? (string)$_GET['sort'] : 'id';
+        $order = isset($_GET['order']) ? (string)$_GET['order'] : 'desc';
+        $domain = isset($_GET['domain']) ? trim((string)$_GET['domain']) : '';
+        $gitName = isset($_GET['git_name']) ? trim((string)$_GET['git_name']) : '';
+        $result = TopicRepository::searchMissingSiteDomain($search, $page, $perPage, $sort, $order, $domain, $gitName);
+        if (isset($_GET['format']) && $_GET['format'] === 'json') {
+            self::emitJson($result);
+            return null;
+        }
+        return [
+            'rows' => $result['rows'],
+            'total' => $result['total'],
+            'page' => $page,
+            'per_page' => $perPage,
+            'search' => $search,
+            'domain' => $domain,
+            'git_name' => $gitName,
+            'can_manage' => Security::can('topic.manage'),
+            'csrf_token' => Security::csrfToken(),
+        ];
+    }
+
     private static function tableData()
     {
         list($page, $perPage) = self::pageParams();
@@ -461,18 +537,18 @@ class TopicController
         return array_values($rows);
     }
 
-    private static function pageParams()
+    private static function pageParams($maxPerPage = 200, $defaultPerPage = 20)
     {
         if (isset($_GET['offset']) || isset($_GET['limit'])) {
-            $perPage = isset($_GET['limit']) ? (int)$_GET['limit'] : 20;
+            $perPage = isset($_GET['limit']) ? (int)$_GET['limit'] : $defaultPerPage;
             $offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
             $page = floor($offset / max(1, $perPage)) + 1;
         } else {
             $page = isset($_GET['pageNumber']) ? (int)$_GET['pageNumber'] : 1;
-            $perPage = isset($_GET['pageSize']) ? (int)$_GET['pageSize'] : 20;
+            $perPage = isset($_GET['pageSize']) ? (int)$_GET['pageSize'] : $defaultPerPage;
         }
         $page = max(1, $page);
-        $perPage = max(1, min(200, $perPage));
+        $perPage = max(1, min($maxPerPage, $perPage));
         return [$page, $perPage];
     }
 
