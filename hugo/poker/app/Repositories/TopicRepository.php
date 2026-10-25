@@ -306,14 +306,19 @@ class TopicRepository
             $params['kw'] = '%' . $search . '%';
         }
         if ($domain !== '') {
-            $where .= ' AND LOWER(TRIM(COALESCE("t"."domain", \'\'))) = LOWER(TRIM(:domain))';
-            $params['domain'] = $domain;
+            $where .= ' AND LOWER(TRIM(COALESCE("t"."domain", \'\'))) LIKE LOWER(:domain) ESCAPE \'!\'';
+            $params['domain'] = self::likeContains($domain);
         }
         if ($gitName !== '') {
-            $where .= ' AND LOWER(TRIM(COALESCE("t"."git_name", \'\'))) = LOWER(TRIM(:git_name))';
-            $params['git_name'] = $gitName;
+            $where .= ' AND LOWER(TRIM(COALESCE("t"."git_name", \'\'))) LIKE LOWER(:git_name) ESCAPE \'!\'';
+            $params['git_name'] = self::likeContains($gitName);
         }
         return [$where, $params];
+    }
+
+    private static function likeContains($value)
+    {
+        return '%' . str_replace(['!', '%', '_'], ['!!', '!%', '!_'], (string)$value) . '%';
     }
 
     public static function summarize()

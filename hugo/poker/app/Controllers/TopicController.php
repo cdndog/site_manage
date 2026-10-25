@@ -420,11 +420,6 @@ class TopicController
         $domain = isset($_POST['domain']) ? trim((string)$_POST['domain']) : '';
         $gitName = isset($_POST['git_name']) ? trim((string)$_POST['git_name']) : '';
         $deleted = TopicRepository::deleteMissingSiteDomain('', $domain, $gitName);
-        try {
-            TopicService::export();
-        } catch (\Throwable $e) {
-            // 导出失败不影响已完成的删除
-        }
         $filters = [];
         if ($domain !== '') {
             $filters[] = '域名=' . $domain;
@@ -433,6 +428,19 @@ class TopicController
             $filters[] = 'GIT=' . $gitName;
         }
         $scope = count($filters) > 0 ? implode('，', $filters) : '全部异常话题';
+        if ($deleted === 0) {
+            self::emitJson(['total' => 0, 'rows' => [[
+                'ok' => false,
+                'message' => "未删除任何数据（{$scope}）：没有符合条件的异常话题",
+                'deleted' => 0,
+            ]]]);
+            return;
+        }
+        try {
+            TopicService::export();
+        } catch (\Throwable $e) {
+            // 导出失败不影响已完成的删除
+        }
         self::emitJson(['total' => 1, 'rows' => [[
             'ok' => true,
             'message' => "已删除 {$deleted} 条异常话题（{$scope}）",
@@ -442,7 +450,7 @@ class TopicController
 
     private static function checkData()
     {
-        list($page, $perPage) = self::pageParams(1000, 1000);
+        list($page, $perPage) = self::pageParams(1000, 20);
         $search = isset($_GET['search']) ? trim((string)$_GET['search']) : '';
         $sort = isset($_GET['sort']) ? (string)$_GET['sort'] : 'id';
         $order = isset($_GET['order']) ? (string)$_GET['order'] : 'desc';
@@ -450,6 +458,11 @@ class TopicController
         $gitName = isset($_GET['git_name']) ? trim((string)$_GET['git_name']) : '';
         $result = TopicRepository::searchMissingSiteDomain($search, $page, $perPage, $sort, $order, $domain, $gitName);
         if (isset($_GET['format']) && $_GET['format'] === 'json') {
+            if (!headers_sent()) {
+                header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+                header('Pragma: no-cache');
+                header('Expires: 0');
+            }
             self::emitJson($result);
             return null;
         }

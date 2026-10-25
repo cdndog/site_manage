@@ -15,11 +15,11 @@
       </div>
       <form class="form-row align-items-end mb-3" id="checkFilterForm" onsubmit="return topicCheckApplyFilter(event)">
         <div class="col-sm-4 col-lg-3 mb-2">
-          <label class="small mb-1" for="checkDomain">发布域名 <span class="text-muted">（精确匹配）</span></label>
+          <label class="small mb-1" for="checkDomain">发布域名 <span class="text-muted">（模糊匹配）</span></label>
           <input type="text" class="form-control form-control-sm" id="checkDomain" name="domain" value="<?php echo e(isset($domain) ? $domain : ''); ?>" placeholder="例如 nicecalc.com" autocomplete="off">
         </div>
         <div class="col-sm-4 col-lg-3 mb-2">
-          <label class="small mb-1" for="checkGitName">发布GIT <span class="text-muted">（精确匹配）</span></label>
+          <label class="small mb-1" for="checkGitName">发布GIT <span class="text-muted">（模糊匹配）</span></label>
           <input type="text" class="form-control form-control-sm" id="checkGitName" name="git_name" value="<?php echo e(isset($git_name) ? $git_name : ''); ?>" placeholder="例如 nicecalc.com" autocomplete="off">
         </div>
         <div class="col-sm-4 col-lg-6 mb-2 d-flex flex-wrap align-items-center" style="gap:6px;">
@@ -30,7 +30,7 @@
 <?php endif; ?>
         </div>
       </form>
-      <p class="small text-muted mb-2">域名/GIT 为精确匹配（忽略大小写与首尾空格）。删除仅作用于上述过滤条件命中的异常话题；不填写过滤条件将删除全部异常话题，操作不可恢复。</p>
+      <p class="small text-muted mb-2">域名/GIT 为模糊匹配（忽略大小写与首尾空格）。删除仅作用于上述过滤条件命中的异常话题；不填写过滤条件将删除全部异常话题，操作不可恢复。</p>
 
     <table id="table" class="table table-hover table-sm">
       <thead>
@@ -151,6 +151,7 @@
               locale: 'zh-CN',
               iconsPrefix: 'bi',
               url: 'topiccheck.php',
+              cache: false,
               sidePagination: 'server',
               totalField: 'total',
               dataField: 'rows',
@@ -158,6 +159,7 @@
                 var filters = topicCheckFilters();
                 return {
                   format: 'json',
+                  _t: Date.now(),
                   offset: params.offset,
                   limit: params.limit,
                   search: params.search || '',
@@ -187,8 +189,8 @@
               sortName: 'ctx_id',
               sortOrder: 'desc',
               pagination: true,
-              pageSize: 1000,
-              pageList: [1000],
+              pageSize: 20,
+              pageList: [10, 20, 50, 100, 200, 500, 1000],
               searchPlaceholder: '搜索关键词、域名、GIT、状态等',
               formatShowingRows: function (pageFrom, pageTo, totalRows) {
                 return '显示 ' + pageFrom + ' 到 ' + pageTo + ' 共 ' + totalRows + ' 条';
