@@ -295,6 +295,7 @@ class Config
                     ['title' => '新增关键词', 'url' => 'keywordops.php', 'icon' => 'bi-plus-circle', 'perm' => 'keyword.manage'],
                     ['title' => '关键词列表', 'url' => 'seo_report.php?reporttype=wordlist', 'icon' => 'bi-list-check', 'perm' => 'keyword.view'],
                     ['title' => '关联关键词', 'url' => 'seo_report.php?reporttype=relateword', 'icon' => 'bi-link-45deg', 'perm' => 'keyword.view'],
+                    ['title' => '关键词排查', 'url' => 'keywordcheck.php', 'icon' => 'bi-exclamation-triangle', 'perm' => 'keyword.view'],
                 ],
             ],
             [

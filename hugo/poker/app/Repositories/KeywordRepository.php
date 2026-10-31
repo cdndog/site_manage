@@ -310,7 +310,80 @@ class KeywordRepository
         return ['imported' => $imported, 'skipped' => $skipped, 'failed' => $failed];
     }
 
-    const SORTABLE = ['id', 'ctx_id', 'keyword', 'status', 'git_name', 'pubdir', 'lang', 'geo', 'lasttask'];
+    const SORTABLE = ['id', 'ctx_id', 'keyword', 'status', 'git_name', 'pubdir', 'lang', 'geo', 'lasttask', 'time'];
+
+    public static function searchMissingSite($search, $page, $perPage, $sort = 'id', $order = 'desc', $keyword = '', $gitName = '')
+    {
+        self::ensureTable();
+        list($where, $params) = self::missingSiteWhere($search, $keyword, $gitName);
+        $orderBy = ' ORDER BY "t"."id" DESC';
+        if (in_array($sort, self::SORTABLE, true)) {
+            $direction = strtolower((string)$order) === 'asc' ? 'ASC' : 'DESC';
+            $orderBy = ' ORDER BY "t"."' . $sort . '" ' . $direction . ', "t"."id" DESC';
+        }
+        $total = Database::fetchOne('SELECT COUNT(*) AS "c" FROM "keywordmonitorlist" "t"' . $where, $params);
+        $page = max(1, (int)$page);
+        $perPage = max(1, (int)$perPage);
+        $offset = ($page - 1) * $perPage;
+        $rows = Database::fetchAll(
+            'SELECT "t"."id", "t"."ctx_id", "t"."keyword", "t"."status", "t"."git_name", "t"."pubdir", "t"."lang", "t"."geo", "t"."lasttask", "t"."time"'
+            . ' FROM "keywordmonitorlist" "t"' . $where . $orderBy . ' LIMIT ' . (int)$perPage . ' OFFSET ' . (int)$offset,
+            $params
+        );
+        return [
+            'rows' => $rows,
+            'total' => isset($total['c']) ? (int)$total['c'] : 0,
+        ];
+    }
+
+    public static function deleteMissingSite($search = '', $keyword = '', $gitName = '')
+    {
+        self::ensureTable();
+        list($where, $params) = self::missingSiteWhere($search, $keyword, $gitName);
+        $deleted = (int)Database::execute(
+            'DELETE FROM "keywordmonitorlist" WHERE "id" IN (SELECT "t"."id" FROM "keywordmonitorlist" "t"' . $where . ')',
+            $params
+        );
+        if ($deleted > 0) {
+            Cache::forget('keyword:all');
+        }
+        return $deleted;
+    }
+
+    private static function missingSiteWhere($search, $keyword, $gitName)
+    {
+        $where = ' WHERE LOWER(TRIM(COALESCE("t"."git_name", \'\'))) NOT IN ('
+            . 'SELECT LOWER(TRIM("domain")) FROM "siteops" WHERE COALESCE("domain", \'\') <> \'\' '
+            . 'UNION '
+            . 'SELECT LOWER(TRIM("git_name")) FROM "siteops" WHERE COALESCE("git_name", \'\') <> \'\''
+            . ')';
+        $params = [];
+        if ($search !== '') {
+            $where .= ' AND (LOWER(COALESCE("t"."keyword", \'\')) LIKE LOWER(:kw)'
+                . ' OR LOWER(COALESCE("t"."git_name", \'\')) LIKE LOWER(:kw)'
+                . ' OR LOWER(COALESCE("t"."pubdir", \'\')) LIKE LOWER(:kw)'
+                . ' OR LOWER(COALESCE("t"."status", \'\')) LIKE LOWER(:kw)'
+                . ' OR LOWER(COALESCE("t"."lang", \'\')) LIKE LOWER(:kw)'
+                . ' OR LOWER(COALESCE("t"."geo", \'\')) LIKE LOWER(:kw)'
+                . ' OR LOWER(COALESCE("t"."lasttask", \'\')) LIKE LOWER(:kw)'
+                . ' OR LOWER(COALESCE("t"."ctx_id", \'\')) LIKE LOWER(:kw))';
+            $params['kw'] = '%' . $search . '%';
+        }
+        if ($keyword !== '') {
+            $where .= ' AND LOWER(COALESCE("t"."keyword", \'\')) LIKE LOWER(:keyword) ESCAPE \'!\'';
+            $params['keyword'] = self::likeContains($keyword);
+        }
+        if ($gitName !== '') {
+            $where .= ' AND LOWER(TRIM(COALESCE("t"."git_name", \'\'))) LIKE LOWER(:git_name) ESCAPE \'!\'';
+            $params['git_name'] = self::likeContains($gitName);
+        }
+        return [$where, $params];
+    }
+
+    private static function likeContains($value)
+    {
+        return '%' . str_replace(['!', '%', '_'], ['!!', '!%', '!_'], (string)$value) . '%';
+    }
 
     public static function search($search, $page, $perPage, $sort = 'id', $order = 'desc')
     {

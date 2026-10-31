@@ -224,7 +224,7 @@ $flattenModules = function ($list) use (&$flattenModules) {
 $flatMods = $flattenModules($mods);
 $flatUrls = array_map(function ($m) { return isset($m['url']) ? $m['url'] : ''; }, $flatMods);
 test('headerModules grouped by 8 domains', is_array($mods) && count($mods) === 8 && $mods[0]['title'] === '数据看板' && $mods[0]['url'] === 'dash.php' && $mods[0]['perm'] === 'report.view' && $mods[1]['title'] === '站点管理' && $mods[2]['title'] === '关键词管理' && $mods[3]['title'] === '话题管理' && $mods[4]['title'] === '改写管理' && $mods[4]['url'] === 'rewriteops.php' && $mods[5]['title'] === '文章管理' && $mods[6]['title'] === '发布管理' && $mods[7]['title'] === '系统管理');
-test('headerModules contains all entries', in_array('dash.php', $flatUrls, true) && in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('topiccheck.php', $flatUrls, true) && in_array('rewriteops.php', $flatUrls, true) && in_array('rewritelist.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true) && in_array('publish_list.php', $flatUrls, true));
+test('headerModules contains all entries', in_array('dash.php', $flatUrls, true) && in_array('siteops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=sitelist', $flatUrls, true) && in_array('keywordops.php', $flatUrls, true) && in_array('seo_report.php?reporttype=wordlist', $flatUrls, true) && in_array('seo_report.php?reporttype=relateword', $flatUrls, true) && in_array('keywordcheck.php', $flatUrls, true) && in_array('topicops.php', $flatUrls, true) && in_array('topiclist.php', $flatUrls, true) && in_array('topictable.php', $flatUrls, true) && in_array('topiccheck.php', $flatUrls, true) && in_array('rewriteops.php', $flatUrls, true) && in_array('rewritelist.php', $flatUrls, true) && in_array('article_new.php', $flatUrls, true) && in_array('article_list.php', $flatUrls, true) && in_array('publish_list.php', $flatUrls, true));
 $html = runRequest();
 test('header module nav renders', strpos($html, 'sops-sidebar-link') !== false);
 foreach ($flatUrls as $url) {
@@ -568,7 +568,7 @@ $expiredAuthMac = substr(hash_hmac('sha256', 'auth|admin|' . $expiredAuth, 'auth
 $expiredSession = ['siteops_uid' => 'expireuser', 'siteops_auth' => 'admin|' . $expiredAuth . '|' . $expiredAuthMac];
 $expiredEntries = [
     '/publish_list.php', '/publish_edit.php', '/article_list.php', '/article_new.php',
-    '/topiclist.php', '/topictable.php', '/topiccheck.php', '/topicops.php', '/siteops.php', '/keywordops.php',
+    '/topiclist.php', '/topictable.php', '/topiccheck.php', '/topicops.php', '/siteops.php', '/keywordops.php', '/keywordcheck.php',
     '/users.php', '/user_edit.php', '/roles.php', '/role_edit.php', '/config_list.php',
     '/config_edit.php', '/cache_manage.php', '/seo_report.php', '/wechat_cookie.php',
 ];
@@ -1789,6 +1789,7 @@ db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, la
 $html = runRequest([], [], 'GET', [], '/topiccheck.php');
 test('topic check page renders title', strpos($html, '数据排查') !== false);
 test('topic check page uses server-side table', strpos($html, "url: 'topiccheck.php'") !== false && strpos($html, "sidePagination: 'server'") !== false && strpos($html, 'pageSize: 20') !== false && strpos($html, 'pageList: [10, 20, 50, 100, 200, 500, 1000]') !== false);
+test('topic check delete uses modal instead of native dialogs', strpos($html, 'id="topicCheckDeleteModal"') !== false && strpos($html, 'topicCheckDeleteExecute') !== false && strpos($html, 'window.alert') === false && strpos($html, 'window.confirm') === false);
 $json = runRequest(['format' => 'json', 'search' => 'TOPICCHECKMISS'], [], 'GET', [], '/topiccheck.php');
 $payload = json_decode($json, true);
 test('topic check json returns unmatched domain rows', is_array($payload) && $payload['total'] === 2 && count($payload['rows']) === 2 && in_array('TOPICCHECKMISS1', array_column($payload['rows'], 'ctx_id'), true), substr($json, 0, 160));
@@ -1837,6 +1838,77 @@ $payload = json_decode($json, true);
 $remaining = array_column(db("SELECT ctx_id FROM sitetopic WHERE ctx_id LIKE 'TOPICDELCHECK%' ORDER BY ctx_id"), 'ctx_id');
 test('topic check delete by git name removes abnormal rows', is_array($payload) && $payload['rows'][0]['deleted'] === 1 && $remaining === ['TOPICDELCHECK4', 'TOPICDELCHECKMATCH'], json_encode($remaining));
 db("DELETE FROM sitetopic WHERE ctx_id IN ('TOPICDELCHECK1','TOPICDELCHECK2','TOPICDELCHECK3','TOPICDELCHECK4','TOPICDELCHECKMATCH')");
+
+echo "== keyword data check ==\n";
+db("DELETE FROM keywordmonitorlist WHERE ctx_id IN ('KWCHECKMISS1','KWCHECKMISS2','KWCHECKVALID1','KWCHECKVALID2','KWCHECKTRIM1','KWCHECKEMPTY1')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWCHECKMISS1', 'kwcheck-missing.example', 'KWCHECK alpha', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-04 10:00:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWCHECKMISS2', 'kwcheck-git.example', 'KWCHECK beta', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-04 10:01:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWCHECKVALID1', 'testpoker', 'KWCHECK valid git', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-04 10:02:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWCHECKVALID2', 'testpoker.com', 'KWCHECK valid domain', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-04 10:03:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWCHECKTRIM1', ' TESTPOKER.COM ', 'KWCHECK trim match', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-04 10:04:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWCHECKEMPTY1', '', 'KWCHECK empty git', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-04 10:05:00')");
+$html = runRequest([], [], 'GET', [], '/keywordcheck.php');
+test('keyword check page renders title', strpos($html, '关键词排查') !== false && strpos($html, 'id="keywordCheckFilterForm"') !== false);
+test('keyword check page uses server-side table', strpos($html, "url: 'keywordcheck.php'") !== false && strpos($html, "sidePagination: 'server'") !== false && strpos($html, 'pageSize: 20') !== false && strpos($html, 'pageList: [10, 20, 50, 100, 200, 500, 1000]') !== false);
+test('keyword check delete uses modal instead of native dialogs', strpos($html, 'id="keywordCheckDeleteModal"') !== false && strpos($html, 'keywordCheckDeleteExecute') !== false && strpos($html, 'window.alert') === false && strpos($html, 'window.confirm') === false);
+$json = runRequest(['format' => 'json', 'search' => 'KWCHECK'], [], 'GET', [], '/keywordcheck.php');
+$payload = json_decode($json, true);
+test('keyword check json returns unmatched git rows', is_array($payload) && $payload['total'] === 3 && count($payload['rows']) === 3 && in_array('KWCHECKMISS1', array_column($payload['rows'], 'ctx_id'), true), substr($json, 0, 160));
+$json = runRequest(['format' => 'json', 'search' => 'KWCHECK', 'sort' => 'git_name', 'order' => 'asc', 'offset' => 1, 'limit' => 1], [], 'GET', [], '/keywordcheck.php');
+$payload = json_decode($json, true);
+test('keyword check json sorts and paginates rows', is_array($payload) && $payload['total'] === 3 && count($payload['rows']) === 1 && $payload['rows'][0]['ctx_id'] === 'KWCHECKMISS2', substr($json, 0, 160));
+$json = runRequest(['format' => 'json', 'search' => 'KWCHECK', 'keyword' => ' ALPHA '], [], 'GET', [], '/keywordcheck.php');
+$payload = json_decode($json, true);
+test('keyword check keyword filter fuzzy ignores case and trim', is_array($payload) && $payload['total'] === 1 && $payload['rows'][0]['ctx_id'] === 'KWCHECKMISS1', substr($json, 0, 160));
+$json = runRequest(['format' => 'json', 'search' => 'KWCHECK', 'git_name' => ' MISSING '], [], 'GET', [], '/keywordcheck.php');
+$payload = json_decode($json, true);
+test('keyword check git filter fuzzy ignores case and trim', is_array($payload) && $payload['total'] === 1 && $payload['rows'][0]['ctx_id'] === 'KWCHECKMISS1', substr($json, 0, 160));
+$html = runRequest(['keyword' => 'alpha', 'git_name' => 'missing'], [], 'GET', [], '/keywordcheck.php');
+test('keyword check page prefills keyword and git filters', strpos($html, 'id="keywordCheckGit" name="git_name" value="missing"') !== false && strpos($html, 'id="keywordCheckKeyword" name="keyword" value="alpha"') !== false);
+foreach (['KWCHECKVALID1', 'KWCHECKVALID2', 'KWCHECKTRIM1'] as $matchedKeyword) {
+    $json = runRequest(['format' => 'json', 'search' => $matchedKeyword], [], 'GET', [], '/keywordcheck.php');
+    $payload = json_decode($json, true);
+    test('keyword check json excludes site match: ' . $matchedKeyword, is_array($payload) && $payload['total'] === 0, substr($json, 0, 160));
+}
+$json = runRequest(['format' => 'json', 'search' => 'KWCHECKEMPTY'], [], 'GET', [], '/keywordcheck.php');
+$payload = json_decode($json, true);
+test('keyword check empty git is abnormal', is_array($payload) && $payload['total'] === 1 && $payload['rows'][0]['ctx_id'] === 'KWCHECKEMPTY1', substr($json, 0, 160));
+db("DELETE FROM keywordmonitorlist WHERE ctx_id IN ('KWCHECKMISS1','KWCHECKMISS2','KWCHECKVALID1','KWCHECKVALID2','KWCHECKTRIM1','KWCHECKEMPTY1')");
+
+echo "== keyword data check delete ==\n";
+db("DELETE FROM keywordmonitorlist WHERE ctx_id IN ('KWDELCHECK1','KWDELCHECK2','KWDELCHECK3','KWDELCHECK4','KWDELCHECKEMPTY','KWDELCHECKMATCH','KWDELCHECKMATCH2')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWDELCHECK1', 'kwdel-one.example', 'KWDELCHECK1', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-05 10:00:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWDELCHECK2', 'kwdel-one.example', 'KWDELCHECK2', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-05 10:01:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWDELCHECK3', 'kwdel-two.example', 'KWDELCHECK3', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-05 10:02:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWDELCHECK4', 'kwdel-keep.example', 'KWDELCHECK4', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-05 10:03:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWDELCHECKEMPTY', '', 'KWDELCHECKEMPTY', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-05 10:04:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWDELCHECKMATCH', 'testpoker', 'KWDELCHECKMATCH', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-05 10:05:00')");
+db("INSERT INTO keywordmonitorlist (ctx_id, git_name, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('KWDELCHECKMATCH2', 'testpoker.com', 'KWDELCHECKMATCH2', 'article', 'enable', 'en', 'US', '', '{}', '2026-08-05 10:06:00')");
+$json = runRequest(['format' => 'json', 'search' => 'KWDELCHECK', 'git_name' => ' KWDEL-ONE '], [], 'GET', [], '/keywordcheck.php');
+$payload = json_decode($json, true);
+test('keyword check git filter returns matched abnormal rows', is_array($payload) && $payload['total'] === 2, substr($json, 0, 160));
+$json = runRequest(['format' => 'json', 'search' => 'KWDELCHECK', 'keyword' => ' kwdelcheck1 '], [], 'GET', [], '/keywordcheck.php');
+$payload = json_decode($json, true);
+test('keyword check keyword filter returns matched abnormal row', is_array($payload) && $payload['total'] === 1 && $payload['rows'][0]['ctx_id'] === 'KWDELCHECK1', substr($json, 0, 160));
+$kwCheckUid = 'kwcheckuid';
+$kwCheckToken = substr(hash_hmac('sha256', 'csrf|' . $kwCheckUid, 'testcsrfsecret'), 0, 32);
+$json = runRequest([], ['action' => 'delete-missing-keywords', 'keyword' => '', 'git_name' => ' KWDEL-ONE ', 'csrf_token' => 'bad'], 'POST', ['siteops_uid' => 'kwcheckcsrfuid'], '/keywordcheck.php');
+$payload = json_decode($json, true);
+test('keyword check delete rejects invalid csrf', is_array($payload) && $payload['rows'][0]['ok'] === false && count(db("SELECT * FROM keywordmonitorlist WHERE ctx_id LIKE 'KWDELCHECK%'")) === 7, substr($json, 0, 160));
+$json = runRequest([], ['action' => 'delete-missing-keywords', 'keyword' => '', 'git_name' => ' KWDEL-ONE ', 'csrf_token' => $kwCheckToken], 'POST', ['siteops_uid' => $kwCheckUid], '/keywordcheck.php');
+$payload = json_decode($json, true);
+$remaining = array_column(db("SELECT ctx_id FROM keywordmonitorlist WHERE ctx_id LIKE 'KWDELCHECK%' ORDER BY ctx_id"), 'ctx_id');
+test('keyword check delete by git removes abnormal rows', is_array($payload) && $payload['rows'][0]['ok'] === true && $payload['rows'][0]['deleted'] === 2 && $remaining === ['KWDELCHECK3', 'KWDELCHECK4', 'KWDELCHECKEMPTY', 'KWDELCHECKMATCH', 'KWDELCHECKMATCH2'], json_encode($remaining));
+$kwExport = (string)@file_get_contents($dataDir . '/keyword_monitor_list.txt');
+test('keyword check delete refreshes export', strpos($kwExport, 'KWDELCHECK1') === false && strpos($kwExport, 'KWDELCHECK2') === false);
+$json = runRequest([], ['action' => 'delete-missing-keywords', 'keyword' => '', 'git_name' => 'testpoker.com', 'csrf_token' => 'x'], 'POST', [], '/keywordcheck.php');
+$payload = json_decode($json, true);
+test('keyword check delete does not remove matched site rows', is_array($payload) && $payload['rows'][0]['ok'] === false && $payload['rows'][0]['deleted'] === 0 && strpos($payload['rows'][0]['message'], '未删除任何数据') !== false && count(db("SELECT * FROM keywordmonitorlist WHERE ctx_id IN ('KWDELCHECKMATCH','KWDELCHECKMATCH2')")) === 2, substr($json, 0, 160));
+$json = runRequest([], ['action' => 'delete-missing-keywords', 'keyword' => 'KWDELCHECKEMPTY', 'git_name' => '', 'csrf_token' => 'x'], 'POST', [], '/keywordcheck.php');
+$payload = json_decode($json, true);
+$remaining = array_column(db("SELECT ctx_id FROM keywordmonitorlist WHERE ctx_id LIKE 'KWDELCHECK%' ORDER BY ctx_id"), 'ctx_id');
+test('keyword check delete empty git row by keyword', is_array($payload) && $payload['rows'][0]['deleted'] === 1 && $remaining === ['KWDELCHECK3', 'KWDELCHECK4', 'KWDELCHECKMATCH', 'KWDELCHECKMATCH2'], json_encode($remaining));
+db("DELETE FROM keywordmonitorlist WHERE ctx_id IN ('KWDELCHECK1','KWDELCHECK2','KWDELCHECK3','KWDELCHECK4','KWDELCHECKEMPTY','KWDELCHECKMATCH','KWDELCHECKMATCH2')");
 
 echo "== audit log ==\n";test('audit log written', file_exists($dataDir . '/siteops_submit.log') && strpos((string)file_get_contents($dataDir . '/siteops_submit.log'), 'authok.com') !== false);
 
@@ -1941,6 +2013,8 @@ $html = runRequest([], [], 'GET', ['siteops_uid' => 'rbacv1', 'siteops_auth' => 
 test('rbac viewer allowed article list', strpos($html, '文章列表') !== false, substr($html, 0, 120));
 $html = runRequest([], [], 'GET', ['siteops_uid' => 'rbacv1', 'siteops_auth' => $vCookie], '/topiccheck.php');
 test('rbac viewer topic check hides delete button', strpos($html, '数据排查') !== false && strpos($html, 'id="checkDeleteBtn"') === false, substr($html, 0, 120));
+$html = runRequest([], [], 'GET', ['siteops_uid' => 'rbacv1', 'siteops_auth' => $vCookie], '/keywordcheck.php');
+test('rbac viewer keyword check hides delete button', strpos($html, '关键词排查') !== false && strpos($html, 'id="keywordCheckDeleteBtn"') === false, substr($html, 0, 120));
 
 // user_edit page renders form
 $legacyAdminExpiry = time() + 3600;

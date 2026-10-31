@@ -92,12 +92,10 @@
         topicCheckRefresh();
       }
 
+      var topicCheckPendingFilters = null;
+
       function topicCheckToast(message, type) {
-        if (typeof window.sopsToast === 'function') {
-          window.sopsToast(message, type || 'success');
-        } else {
-          window.alert(message);
-        }
+        window.sopsToast(message, type || 'success');
       }
 
       function topicCheckDelete() {
@@ -106,12 +104,34 @@
         if (filters.domain) { scope.push('域名=' + filters.domain); }
         if (filters.git_name) { scope.push('GIT=' + filters.git_name); }
         var label = scope.length > 0 ? scope.join('，') : '全部异常话题';
-        if (!window.confirm('确定删除「' + label + '」的异常话题吗？删除后不可恢复。')) {
+        topicCheckPendingFilters = filters;
+        var labelEl = document.getElementById('topicCheckDeleteLabel');
+        if (labelEl) {
+          labelEl.textContent = label;
+        }
+        if (window.jQuery && window.jQuery.fn && window.jQuery.fn.modal) {
+          window.jQuery('#topicCheckDeleteModal').modal('show');
+        } else if (typeof window.sopsConfirm === 'function') {
+          window.sopsConfirm('确定删除「' + label + '」的异常话题吗？删除后不可恢复。', topicCheckDeleteExecute);
+        }
+      }
+
+      function topicCheckDeleteExecute() {
+        var filters = topicCheckPendingFilters;
+        if (!filters) {
           return;
         }
-        var btn = document.getElementById('checkDeleteBtn');
+        topicCheckPendingFilters = null;
+        var btn = document.getElementById('topicCheckDeleteConfirmBtn');
+        var pageBtn = document.getElementById('checkDeleteBtn');
         if (btn) {
           btn.disabled = true;
+        }
+        if (pageBtn) {
+          pageBtn.disabled = true;
+        }
+        if (window.jQuery && window.jQuery.fn && window.jQuery.fn.modal) {
+          window.jQuery('#topicCheckDeleteModal').modal('hide');
         }
         var csrf = '<?php echo e(isset($csrf_token) ? $csrf_token : ''); ?>';
         var body = 'action=delete-missing-topics'
@@ -127,6 +147,9 @@
           }
           if (btn) {
             btn.disabled = false;
+          }
+          if (pageBtn) {
+            pageBtn.disabled = false;
           }
           if (xhr.status === 401) {
             return;
@@ -220,3 +243,26 @@
     </div>
   </div>
 </div>
+
+<?php if (!empty($can_manage)): ?>
+<div class="modal fade" id="topicCheckDeleteModal" tabindex="-1" role="dialog" aria-labelledby="topicCheckDeleteModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="topicCheckDeleteModalTitle"><i class="bi bi-exclamation-triangle text-danger mr-1" aria-hidden="true"></i>删除异常话题</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p>确定删除「<strong id="topicCheckDeleteLabel"></strong>」的异常话题吗？</p>
+        <p class="text-danger small mb-0">删除后不可恢复。</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-danger" id="topicCheckDeleteConfirmBtn" onclick="topicCheckDeleteExecute()"><i class="bi bi-trash mr-1" aria-hidden="true"></i>确定删除</button>
+      </div>
+    </div>
+  </div>
+</div>
+<?php endif; ?>

@@ -36,6 +36,143 @@ class KeywordController
         }
     }
 
+    public static function dispatchCheck()
+    {
+        header('Content-Type: text/html; charset=utf-8');
+        header('X-Content-Type-Options: nosniff');
+        header('X-Frame-Options: SAMEORIGIN');
+        try {
+            Security::requireApiToken(true);
+            Security::requirePermission('keyword.view');
+            $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+            if ($method === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete-missing-keywords') {
+                self::handleMissingKeywordsDelete();
+                return;
+            }
+            $data = self::checkData();
+            if ($data === null) {
+                return;
+            }
+            self::shellCheck('关键词排查', 'keyword_check', $data);
+        } catch (\Throwable $e) {
+            renderErrorPage($e);
+        }
+    }
+
+    private static function handleMissingKeywordsDelete()
+    {
+        Security::requirePermission('keyword.manage');
+        if (!Security::csrfVerify(Security::requestToken())) {
+            self::emitJson(['total' => 0, 'rows' => [['ok' => false, 'message' => 'CSRF token invalid']]]);
+            return;
+        }
+        $keyword = isset($_POST['keyword']) ? trim((string)$_POST['keyword']) : '';
+        $gitName = isset($_POST['git_name']) ? trim((string)$_POST['git_name']) : '';
+        $deleted = KeywordRepository::deleteMissingSite('', $keyword, $gitName);
+        $filters = [];
+        if ($keyword !== '') {
+            $filters[] = '关键词=' . $keyword;
+        }
+        if ($gitName !== '') {
+            $filters[] = 'GIT=' . $gitName;
+        }
+        $scope = count($filters) > 0 ? implode('，', $filters) : '全部异常关键词';
+        if ($deleted === 0) {
+            self::emitJson(['total' => 0, 'rows' => [[
+                'ok' => false,
+                'message' => "未删除任何数据（{$scope}）：没有符合条件的异常关键词",
+                'deleted' => 0,
+            ]]]);
+            return;
+        }
+        try {
+            KeywordService::export();
+        } catch (\Throwable $e) {
+            // 导出失败不影响已完成的删除
+        }
+        self::emitJson(['total' => 1, 'rows' => [[
+            'ok' => true,
+            'message' => "已删除 {$deleted} 条异常关键词（{$scope}）",
+            'deleted' => $deleted,
+        ]]]);
+    }
+
+    private static function checkData()
+    {
+        $search = isset($_GET['search']) ? trim((string)$_GET['search']) : '';
+        $keyword = isset($_GET['keyword']) ? trim((string)$_GET['keyword']) : '';
+        $gitName = isset($_GET['git_name']) ? trim((string)$_GET['git_name']) : '';
+        if (isset($_GET['format']) && $_GET['format'] === 'json') {
+            list($page, $perPage) = self::pageParams(1000, 20);
+            $sort = isset($_GET['sort']) ? (string)$_GET['sort'] : 'id';
+            $order = isset($_GET['order']) ? (string)$_GET['order'] : 'desc';
+            $result = KeywordRepository::searchMissingSite($search, $page, $perPage, $sort, $order, $keyword, $gitName);
+            if (!headers_sent()) {
+                header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+                header('Pragma: no-cache');
+                header('Expires: 0');
+            }
+            self::emitJson($result);
+            return null;
+        }
+        if (Security::csrfUid() === '') {
+            $uid = Security::randomToken();
+            if (!headers_sent()) {
+                setcookie(Security::UID_COOKIE, $uid, 0, '/', '', false, true);
+            }
+            $_COOKIE[Security::UID_COOKIE] = $uid;
+        }
+        return [
+            'search' => $search,
+            'keyword' => $keyword,
+            'git_name' => $gitName,
+            'can_manage' => Security::can('keyword.manage'),
+            'csrf_token' => Security::csrfToken(),
+        ];
+    }
+
+    private static function pageParams($maxPerPage = 200, $defaultPerPage = 20)
+    {
+        if (isset($_GET['offset']) || isset($_GET['limit'])) {
+            $perPage = isset($_GET['limit']) ? (int)$_GET['limit'] : $defaultPerPage;
+            $offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
+            $page = floor($offset / max(1, $perPage)) + 1;
+        } else {
+            $page = isset($_GET['pageNumber']) ? (int)$_GET['pageNumber'] : 1;
+            $perPage = isset($_GET['pageSize']) ? (int)$_GET['pageSize'] : $defaultPerPage;
+        }
+        $page = max(1, $page);
+        $perPage = max(1, min($maxPerPage, $perPage));
+        return [$page, $perPage];
+    }
+
+    private static function emitJson(array $result)
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['total' => $result['total'], 'rows' => array_values($result['rows'])], JSON_UNESCAPED_UNICODE);
+    }
+
+    private static function shellCheck($pageTitle, $view, array $data = [])
+    {
+        header('Content-Type: text/html; charset=utf-8');
+        header('X-Content-Type-Options: nosniff');
+        header('X-Frame-Options: SAMEORIGIN');
+        try {
+            Security::ensureUidCookie();
+            if (!Security::requireSession()) {
+                return;
+            }
+            Security::requirePermission('keyword.view');
+            render('layout_head', ['page_title' => $pageTitle]);
+            render('header');
+            render($view, $data);
+            render('footer');
+            render('layout_tail');
+        } catch (\Throwable $e) {
+            renderErrorPage($e);
+        }
+    }
+
     private static function handleGet()
     {
         $sites = SiteRepository::all();
