@@ -3217,6 +3217,60 @@ $_SERVER['REQUEST_METHOD'] = 'GET';
 $out = runApiEndpoint(dirname(__DIR__) . '/api/topic_task.php');
 test('topic_task missing t returns 400', strpos($out, 'FAIL') !== false, $out);
 
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICPRIOEN', 'prio-en', 'prio-en.example', 'priority enable only kw', 'article', 'enable', 'en', 'US', 'enable', '{\"keyword\":\"priority enable only kw\",\"git_name\":\"prio-en\",\"domain\":\"prio-en.example\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-02 09:00:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICPRIOEMPTY', 'prio-en', 'prio-empty.example', 'priority enable only kw', 'article', 'enable', 'en', 'US', '', '{\"keyword\":\"priority enable only kw\",\"git_name\":\"prio-en\",\"domain\":\"prio-empty.example\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-01 09:00:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICPRIOOTHER', 'prio-en', 'prio-other.example', 'priority enable only kw', 'article', 'enable', 'en', 'US', '20260101', '{\"keyword\":\"priority enable only kw\",\"git_name\":\"prio-en\",\"domain\":\"prio-other.example\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-03 09:00:00')");
+resetRequest();
+$_GET = ['t' => 'priority enable only kw', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_task.php');
+$prioParts = explode('|', trim($out));
+test('topic_task prioritizes only lasttask enable', ($prioParts[0] ?? '') === 'TOPICPRIOEN', $out);
+db("DELETE FROM sitetopic WHERE ctx_id IN ('TOPICPRIOEN', 'TOPICPRIOEMPTY', 'TOPICPRIOOTHER')");
+
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICPRIOEMPTY1', 'prio-empty', 'prio-empty1.example', 'priority empty second kw', 'article', 'enable', 'en', 'US', '', '{\"keyword\":\"priority empty second kw\",\"git_name\":\"prio-empty\",\"domain\":\"prio-empty1.example\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-03 09:00:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICPRIOEMPTY2', 'prio-empty', 'prio-empty2.example', 'priority empty second kw', 'article', 'enable', 'en', 'US', '', '{\"keyword\":\"priority empty second kw\",\"git_name\":\"prio-empty\",\"domain\":\"prio-empty2.example\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-01 09:00:00')");
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICPRIOOTHER9', 'prio-empty', 'prio-other9.example', 'priority empty second kw', 'article', 'enable', 'en', 'US', '20260101', '{\"keyword\":\"priority empty second kw\",\"git_name\":\"prio-empty\",\"domain\":\"prio-other9.example\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2099-12-31 23:59:59')");
+resetRequest();
+$_GET = ['t' => 'priority empty second kw', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_task.php');
+$prioParts = explode('|', trim($out));
+test('topic_task empty lasttask is second priority', in_array(($prioParts[0] ?? ''), ['TOPICPRIOEMPTY1', 'TOPICPRIOEMPTY2'], true), $out);
+db("DELETE FROM sitetopic WHERE ctx_id IN ('TOPICPRIOEMPTY1', 'TOPICPRIOEMPTY2', 'TOPICPRIOOTHER9')");
+
+for ($i = 0; $i < 30; $i++) {
+    $ctxId = 'TOPICPRIOLATEST' . sprintf('%02d', $i);
+    db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('" . $ctxId . "', 'prio-latest', 'prio-latest" . $i . ".example', 'priority latest ten kw', 'article', 'enable', 'en', 'US', 'enable', '{\"keyword\":\"priority latest ten kw\",\"git_name\":\"prio-latest\",\"domain\":\"prio-latest" . $i . ".example\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-01 09:00:00')");
+}
+$latestSeen = [];
+for ($run = 0; $run < 5; $run++) {
+    db("UPDATE sitetopic SET lasttask = 'enable', json = '{\"keyword\":\"priority latest ten kw\",\"status\":\"enable\"}' WHERE ctx_id LIKE 'TOPICPRIOLATEST%'");
+    resetRequest();
+    $_GET = ['t' => 'priority latest ten kw', 'csrf_token' => 'uivision-key-1'];
+    $_SERVER['REQUEST_METHOD'] = 'GET';
+    $out = runApiEndpoint(dirname(__DIR__) . '/api/topic_task.php');
+    $latestParts = explode('|', trim($out));
+    $latestSeen[] = $latestParts[0] ?? '';
+}
+$latestOk = count($latestSeen) === 5;
+foreach ($latestSeen as $latestCtxId) {
+    if (!preg_match('/^TOPICPRIOLATEST2[0-9]$/', $latestCtxId)) {
+        $latestOk = false;
+    }
+}
+test('topic_task randomizes within latest 10 enable rows', $latestOk, implode(',', $latestSeen));
+db("DELETE FROM sitetopic WHERE ctx_id LIKE 'TOPICPRIOLATEST%'");
+
+db("INSERT INTO sitetopic (ctx_id, git_name, domain, keyword, pubdir, status, lang, geo, lasttask, json, time) VALUES ('TOPICPRIOFB', 'prio-fb', 'prio-fb.example', 'priority fallback kw', 'article', 'enable', 'en', 'US', '20260101', '{\"keyword\":\"priority fallback kw\",\"git_name\":\"prio-fb\",\"domain\":\"prio-fb.example\",\"lang\":\"en\",\"geo\":\"US\",\"status\":\"enable\",\"pubdir\":\"article\"}', '2026-08-03 09:00:00')");
+resetRequest();
+$_GET = ['t' => 'priority fallback kw', 'csrf_token' => 'uivision-key-1'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/topic_task.php');
+$prioParts = explode('|', trim($out));
+test('topic_task falls back when no lasttask enable row exists', ($prioParts[0] ?? '') === 'TOPICPRIOFB', $out);
+db("DELETE FROM sitetopic WHERE ctx_id = 'TOPICPRIOFB'");
+
 // --- api/keyword_query (keywordtask) ---
 // 清理其他 keyword 行的 lasttask，确保只有 APIKWTASK1 满足 task 查询条件（避免 RANDOM 导致的不确定性）
 dbMarkKeywordLasttaskToday(true);

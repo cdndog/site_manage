@@ -112,21 +112,42 @@ if ($status === RewriteService::STATUS) {
 }
 
 if ($q === 'all') {
-    $rows = Database::fetchAll(
-        'SELECT * FROM "sitetopic" WHERE "status" = :status AND "keyword" != \'\' ORDER BY RANDOM() LIMIT 1',
-        ['status' => 'enable']
-    );
+    $scope = ' WHERE "status" = :status AND "keyword" != \'\'';
+    $params = ['status' => 'enable'];
 } else {
     // t 可为任意列的值：ctx_id/keyword/git_name/domain/pubdir/status/lang/geo/lasttask/json
     // PG：json 列为 JSONB，需 ::text 转型才能 ILIKE
     $jsonLike = Database::isPg() ? '"json"::text ILIKE :like' : '"json" LIKE :like';
-    $rows = Database::fetchAll(
-        'SELECT * FROM "sitetopic" WHERE "status" = :status'
+    $scope = ' WHERE "status" = :status'
         . ' AND ("ctx_id" = :q OR "keyword" = :q OR "git_name" = :q OR "domain" = :q OR "pubdir" = :q OR "status" = :q2 OR "lang" = :q OR "geo" = :q OR "lasttask" = :q OR ' . $jsonLike . ')'
-        . ' AND (json_extract("json", \'$.lasttask\') IS NULL OR json_extract("json", \'$.lasttask\') != :today)'
-        . ' ORDER BY RANDOM() LIMIT 1',
-        ['status' => 'enable', 'q' => $q, 'q2' => $q, 'like' => '%' . $q . '%', 'today' => $time]
+        . ' AND (json_extract("json", \'$.lasttask\') IS NULL OR json_extract("json", \'$.lasttask\') != :today)';
+    $params = ['status' => 'enable', 'q' => $q, 'q2' => $q, 'like' => '%' . $q . '%', 'today' => $time];
+}
+
+$priorityOrder = ' ORDER BY RANDOM() LIMIT 1';
+$priorityLatest = ' ORDER BY "ctx_id" DESC LIMIT 10';
+$rows = Database::fetchAll(
+    'SELECT * FROM ('
+    . 'SELECT * FROM "sitetopic"' . $scope
+    . ' AND LOWER(TRIM(COALESCE("lasttask", \'\'))) = \'enable\''
+    . $priorityLatest
+    . ') AS "priority"'
+    . $priorityOrder,
+    $params
+);
+if (empty($rows)) {
+    $rows = Database::fetchAll(
+        'SELECT * FROM ('
+        . 'SELECT * FROM "sitetopic"' . $scope
+        . ' AND COALESCE(TRIM("lasttask"), \'\') = \'\''
+        . $priorityLatest
+        . ') AS "priority"'
+        . $priorityOrder,
+        $params
     );
+}
+if (empty($rows)) {
+    $rows = Database::fetchAll('SELECT * FROM "sitetopic"' . $scope . ' ORDER BY RANDOM() LIMIT 1', $params);
 }
 
 if (empty($rows)) {
