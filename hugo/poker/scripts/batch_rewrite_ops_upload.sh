@@ -30,6 +30,8 @@ Usage: $0 -f <topic_file> [options]
 
   -c <file>   Site config file, default: crawler_publish_config.txt
               lines: domain|(unused)|lang|geo|git_name|pubdir
+              If the topic json has a non-empty "pubdir", it takes precedence;
+              otherwise the pubdir from the config file is used.
   -b <url>    API base URL, default: https://wpk.cpanice.com/v2
   -k <token>  API token, sent as X-CSRF-Token (default: empty)
   -m <secs>   curl max time, default: 120
@@ -38,8 +40,10 @@ Usage: $0 -f <topic_file> [options]
   -h          Show this help
 
 Topics are uploaded to api/rewrite_ops.php with post_status=rewrite.
-Uploaded records are keyed by <topic_id>|<git_name>|<pubdir>, so a topic can be
-uploaded once per site/pubdir. Remove a line from the uploaded file to retry it.
+Uploaded records are keyed by
+<topic_id>|<domain>|<lang>|<geo>|<git_name>|<pubdir>, so the same topic is
+uploaded once per distinct site config. Remove a line from the uploaded file to
+retry it.
 EOF
 }
 
@@ -145,8 +149,38 @@ else
     echo "Pre-filtered (${TODAY}): $(wc -l < "$PROCESS_FILE" | tr -d ' ') / $(wc -l < "$TOPIC_FILE" | tr -d ' ') lines"
 fi
 
-# 站点配置统一从配置文件读取（路径由 -c 指定）
-CONFIG_SOURCE="$CONFIG_FILE"
+# 站点配置：默认从 crawler_publish_config.txt 读取（可用 -c 覆盖）
+# 先把配置读入数组，避免外层配置循环反复读取/解析 topic 文件
+CONFIG_DOMAINS=()
+CONFIG_LANGS=()
+CONFIG_GEOS=()
+CONFIG_GITS=()
+CONFIG_PUBDIRS=()
+
+while IFS= read -r config_line || [[ -n "$config_line" ]]; do
+    config_line="${config_line%$'\r'}"
+    [[ -z "$config_line" || "$config_line" == \#* ]] && continue
+
+    # crawler_publish_config.txt: domain|(unused)|lang|geo|git_name|pubdir
+    IFS='|' read -r domain _unused lang geo git_name pubdir _rest <<< "$config_line"
+    pubdir="${pubdir:-article}"
+
+    if [[ -z "$git_name" ]]; then
+        echo "WARN: skip config line without git_name: $config_line" >&2
+        continue
+    fi
+
+    CONFIG_DOMAINS+=("$domain")
+    CONFIG_LANGS+=("$lang")
+    CONFIG_GEOS+=("$geo")
+    CONFIG_GITS+=("$git_name")
+    CONFIG_PUBDIRS+=("$pubdir")
+done < "$CONFIG_FILE"
+
+if [[ ${#CONFIG_GITS[@]} -eq 0 ]]; then
+    echo "ERROR: no valid site config in: $CONFIG_FILE" >&2
+    exit 2
+fi
 
 is_uploaded() {
     grep -Fqx -- "$1" "$UPLOADED_FILE" >/dev/null 2>&1
@@ -214,56 +248,55 @@ upload_topic() {
 UPLOAD_COUNT=0
 FAIL_COUNT=0
 
-while IFS= read -r config_line || [[ -n "$config_line" ]]; do
-    config_line="${config_line%$'\r'}"
-    [[ -z "$config_line" || "$config_line" == \#* ]] && continue
+for ((site_index = 0; site_index < ${#CONFIG_GITS[@]}; site_index++)); do
+    echo "Site[$site_index]: domain=${CONFIG_DOMAINS[$site_index]:-'-'} git_name=${CONFIG_GITS[$site_index]} lang=${CONFIG_LANGS[$site_index]:-'-'} geo=${CONFIG_GEOS[$site_index]:-'-'} pubdir(config)=${CONFIG_PUBDIRS[$site_index]}"
+done
 
-    # crawler_publish_config.txt: domain|(unused)|lang|geo|git_name|pubdir
-    IFS='|' read -r domain _unused lang geo git_name pubdir _rest <<< "$config_line"
-    pubdir="${pubdir:-article}"
+# 外层 topic、内层站点：每个 topic 只读取/解析一次，再分发到各站点上传，
+# 避免配置项越多、topic 文件被重复解析越多次
+while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
 
-    if [[ -z "$git_name" ]]; then
-        echo "WARN: skip config line without git_name: $config_line" >&2
+    if [[ "$line" != *"|"* ]]; then
+        echo "SKIP malformed line (expected id|url|json): ${line:0:80}" >&2
         continue
     fi
 
-    echo "==> site: domain=${domain:-'-'} git_name=$git_name lang=${lang:-'-'} geo=${geo:-'-'} pubdir=$pubdir"
+    # 按 | 分割：第1列 ID，第2列 URL，第3列 JSON
+    topic_id=$(echo "$line" | cut -d'|' -f1)
+    topic_url=$(echo "$line" | cut -d'|' -f2)
+    topic_json=$(echo "$line" | cut -d'|' -f3-)
 
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        line="${line%$'\r'}"
-        [[ -z "$line" || "$line" == \#* ]] && continue
+    # JSON 格式不合法则直接跳过（不处理、不记录失败）
+    if ! printf '%s' "$topic_json" | jq -e . >/dev/null 2>&1; then
+        echo "SKIP invalid JSON: $topic_id" >&2
+        continue
+    fi
 
-        if [[ "$line" != *"|"* ]]; then
-            echo "SKIP malformed line (expected id|url|json): ${line:0:80}" >&2
-            continue
-        fi
+    keyword="$(printf '%s' "$topic_json" | jq -r '.title.text[0] // .keyword // empty')"
+    ctx_id="$(printf '%s' "$topic_json" | jq -r '.post_uuid // .ctx_id // empty')"
+    # topic json 中的 pubdir 优先；为空或非字符串时回退到站点配置
+    json_pubdir="$(printf '%s' "$topic_json" | jq -r '.pubdir | if type == "string" then . else empty end')"
 
-        # 按 | 分割：第1列 ID，第2列 URL，第3列起为 JSON
-        # topic_id="${line%%|*}"
-        # rest="${line#*|}"
-        # topic_url="${rest%%|*}"
-        # topic_json="${rest#*|}"
-        # 按 | 分割：第1列 ID，第2列 URL，第3列 JSON
-        topic_id=$(echo "$line" | cut -d'|' -f1)
-        topic_url=$(echo "$line" | cut -d'|' -f2)
-        topic_json=$(echo "$line" | cut -d'|' -f3-)
+    # ctx_id 不合法时交给服务端生成，避免整条上传失败
+    if [[ -n "$ctx_id" && ! "$ctx_id" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+        echo "WARN: ignoring invalid ctx_id '$ctx_id' for $topic_id" >&2
+        ctx_id=""
+    fi
 
-        # JSON 格式不合法则直接跳过（不处理、不记录失败）
-        if ! printf '%s' "$topic_json" | jq -e . >/dev/null 2>&1; then
-            echo "SKIP invalid JSON: $topic_id" >&2
-            continue
-        fi
+    for ((site_index = 0; site_index < ${#CONFIG_GITS[@]}; site_index++)); do
+        domain="${CONFIG_DOMAINS[$site_index]}"
+        lang="${CONFIG_LANGS[$site_index]}"
+        geo="${CONFIG_GEOS[$site_index]}"
+        git_name="${CONFIG_GITS[$site_index]}"
+        config_pubdir="${CONFIG_PUBDIRS[$site_index]}"
+        # topic json 的 pubdir 优先，没有时使用站点配置的 pubdir
+        pubdir="${json_pubdir:-$config_pubdir}"
 
-        keyword="$(printf '%s' "$topic_json" | jq -r '.title.text[0] // .keyword // empty')"
-        ctx_id="$(printf '%s' "$topic_json" | jq -r '.post_uuid // .ctx_id // empty')"
-
-        # ctx_id 不合法时交给服务端生成，避免整条上传失败
-        if [[ -n "$ctx_id" && ! "$ctx_id" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
-            echo "WARN: ignoring invalid ctx_id '$ctx_id' for $topic_id" >&2
-            ctx_id=""
-        fi
-
-        upload_key="${topic_id}|${git_name}|${pubdir}"
+        # 去重 key 覆盖所有会写入服务端的站点字段：
+        # 完全相同的配置项只上传一次，不同 lang/geo/domain 的配置项互不影响
+        upload_key="${topic_id}|${domain}|${lang}|${geo}|${git_name}|${pubdir}"
         if is_uploaded "$upload_key"; then
             echo "SKIP already uploaded: $upload_key"
             continue
@@ -276,7 +309,7 @@ while IFS= read -r config_line || [[ -n "$config_line" ]]; do
             continue
         fi
 
-        echo "Uploading $topic_id ($topic_url) keyword=$keyword"
+        echo "Uploading $topic_id ($topic_url) keyword=$keyword site=$git_name/$pubdir"
         if upload_topic "$domain" "$lang" "$geo" "$git_name" "$pubdir" "$keyword" "$ctx_id" "$topic_json"; then
             mark_uploaded "$upload_key"
             UPLOAD_COUNT=$((UPLOAD_COUNT + 1))
@@ -286,8 +319,8 @@ while IFS= read -r config_line || [[ -n "$config_line" ]]; do
             FAIL_COUNT=$((FAIL_COUNT + 1))
             echo "FAILED $upload_key" >&2
         fi
-    done < "$PROCESS_FILE"
-done < "$CONFIG_SOURCE"
+    done
+done < "$PROCESS_FILE"
 
 echo "Done: uploaded=$UPLOAD_COUNT failed=$FAIL_COUNT (uploaded_file=$UPLOADED_FILE failed_file=$FAILED_FILE)"
 
