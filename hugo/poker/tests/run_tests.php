@@ -3417,6 +3417,22 @@ test('image_search drops http-only entries', implode(' ', $iszParsed) === 'https
 test('image_search excludes gstatic thumbnails', strpos(implode(' ', $iszParsed), 'gstatic') === false, implode(' ', $iszParsed));
 test('image_search does not span entry boundaries', strpos($iszParsed[0], '","') === false && strpos($iszParsed[0], '",') === false, $iszParsed[0] ?? '');
 
+// 真实 Google 内联数据会把 URL 做 JSON 转义（\/、\u0026、\u003d），必须先还原再改写代理，
+// 否则返回的是带反斜杠的畸形地址，浏览器无法加载。
+$iszEscapedFixture = '<script>data:[["https:\/\/images.cats.com\/e.jpg?w=640\u0026h=480\u003d1",640,480],["https:\/\/pics.animals.io\/f.png",100,100]]</script>';
+$iszEscaped = App\Services\ImageSearchService::parseImageUrls($iszEscapedFixture, 20);
+test('image_search decodes json-escaped google urls', $iszEscaped === ['https://i1.wp.com/images.cats.com/e.jpg?w=640&h=480=1', 'https://i1.wp.com/pics.animals.io/f.png'], json_encode($iszEscaped));
+
+// 端到端：转义 fixture 经接口返回的也必须是可用的（无反斜杠）地址
+$GLOBALS['__imageSearchFixtureHtml'] = $iszEscapedFixture;
+resetRequest();
+$_GET = ['q' => 'cat', 'limit' => 20, 'validate' => '0'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszEscJson = json_decode($out, true);
+test('image_search endpoint returns decoded escaped urls', ($iszEscJson['images'][0] ?? '') === 'https://i1.wp.com/images.cats.com/e.jpg?w=640&h=480=1', $out);
+unset($GLOBALS['__imageSearchFixtureHtml']);
+
 $iszMany = '<script>data:[' . implode(',', array_map(function ($i) {
     return '["https://host' . $i . '.example.com/img' . $i . '.jpg",' . (100 + $i) . ',' . (200 + $i) . ']';
 }, range(1, 25))) . ']</script>';
@@ -3451,6 +3467,24 @@ $_SERVER['REQUEST_METHOD'] = 'GET';
 $out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
 test('image_search missing q returns error', strpos($out, 'error') !== false || strpos($out, 'q (or keyword) parameter required') !== false, $out);
 
+// 数组形态参数不能让 PHP 警告混进 JSON 响应体
+resetRequest();
+$_GET = ['q' => ['cat']];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszArrJson = json_decode($out, true);
+test('image_search array q stays valid json', is_array($iszArrJson) && ($iszArrJson['ok'] ?? true) === false && strpos($out, 'Array to string') === false, $out);
+
+// 非法 UTF-8 关键词不能让 json_encode 失败并输出空响应体
+$GLOBALS['__imageSearchFixtureHtml'] = $iszFixture;
+resetRequest();
+$_GET = ['q' => "\xFF", 'limit' => 5];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszUtfJson = json_decode($out, true);
+test('image_search invalid utf8 keyword returns json', is_array($iszUtfJson) && ($iszUtfJson['ok'] ?? false) === true && $out !== '', $out);
+unset($GLOBALS['__imageSearchFixtureHtml']);
+
 resetRequest();
 $_GET = ['q' => 'cat'];
 $_SERVER['REQUEST_METHOD'] = 'POST';
@@ -3476,6 +3510,9 @@ test('image_search bing respects limit', count(App\Services\ImageSearchService::
 // 回退：无 iusc 锚点时用 entity 正则
 $bingEntityOnly = '<div data-x="{&quot;murl&quot;:&quot;https://only.example.com/x.jpg&quot;}"></div>';
 test('image_search bing entity fallback', App\Services\ImageSearchService::parseBingImageUrls($bingEntityOnly, 20) === ['https://only.example.com/x.jpg'], json_encode(App\Services\ImageSearchService::parseBingImageUrls($bingEntityOnly, 20)));
+// 回退路径不能把带查询串的 murl 在 & 处截断（旧正则 [^&]+ 的 bug）
+$bingEntityAmp = '<div data-x="{&quot;murl&quot;:&quot;https://only.example.com/x.jpg?a=1&amp;b=2&quot;}"></div>';
+test('image_search bing entity fallback keeps query string', App\Services\ImageSearchService::parseBingImageUrls($bingEntityAmp, 20) === ['https://only.example.com/x.jpg?a=1&b=2'], json_encode(App\Services\ImageSearchService::parseBingImageUrls($bingEntityAmp, 20)));
 test('image_search bing empty html returns empty', App\Services\ImageSearchService::parseBingImageUrls('', 20) === [], '');
 
 // 端到端兜底：Google fixture 为 Bing 页 → Google 解析 0 条 → 自动回退 Bing 拿到真实图片
@@ -3490,6 +3527,68 @@ test('image_search bing fallback returns real images', (int)($iszJson['count'] ?
 test('image_search bing source url exposed', strpos($iszJson['source'] ?? '', 'bing.com/images/search') !== false, $out);
 unset($GLOBALS['__imageSearchFixtureHtml']);
 
+// --- 百度 / 360 兜底引擎：Bing 被风控时中文关键词仍能出图 ---
+$baiduUrl = App\Services\ImageSearchService::buildBaiduUrl('钱包');
+test('image_search buildBaiduUrl targets baidu acjson', strpos($baiduUrl, 'https://image.baidu.com/search/acjson?') === 0 && strpos($baiduUrl, 'word=%E9%92%B1%E5%8C%85') !== false, $baiduUrl);
+$so360Url = App\Services\ImageSearchService::build360Url('钱包');
+test('image_search build360Url targets so.com json', strpos($so360Url, 'https://image.so.com/j?q=%E9%92%B1%E5%8C%85') === 0, $so360Url);
+test('image_search buildSourceUrl maps engines', App\Services\ImageSearchService::buildSourceUrl('bing', 'cat') === App\Services\ImageSearchService::buildBingUrl('cat')
+    && App\Services\ImageSearchService::buildSourceUrl('baidu', 'cat') === App\Services\ImageSearchService::buildBaiduUrl('cat')
+    && App\Services\ImageSearchService::buildSourceUrl('so360', 'cat') === App\Services\ImageSearchService::build360Url('cat')
+    && App\Services\ImageSearchService::buildSourceUrl('none', 'cat') === App\Services\ImageSearchService::buildUrl('cat'), '');
+
+$baiduJson = '{"data":[{"middleURL":"https:\/\/img2.baidu.com\/it\/u=1&fm=253"},{"thumbURL":"https:\/\/img2.baidu.com\/it\/u=2"},{"hoverURL":"https:\/\/img2.baidu.com\/it\/u=3"},{"middleURL":"https:\/\/img2.baidu.com\/it\/u=1&fm=253"},{"middleURL":""},{}]}';
+$baiduParsed = App\Services\ImageSearchService::parseBaiduImageUrls($baiduJson, 20);
+test('image_search parses baidu json urls', $baiduParsed === ['https://img2.baidu.com/it/u=1&fm=253', 'https://img2.baidu.com/it/u=2', 'https://img2.baidu.com/it/u=3'], json_encode($baiduParsed));
+test('image_search baidu respects limit', count(App\Services\ImageSearchService::parseBaiduImageUrls($baiduJson, 2)) === 2, '');
+test('image_search baidu invalid json returns empty', App\Services\ImageSearchService::parseBaiduImageUrls('<html></html>', 20) === [], '');
+
+$so360Json = '{"list":[{"thumb_bak":"https:\/\/p0.ssl.qhimgs1.com\/a.jpg"},{"thumb":"https:\/\/p0.ssl.qhimgs1.com\/b.jpg"},{"img":"http:\/\/p0.so.qhimg.com\/c.jpg"},{"thumb":"https:\/\/p0.ssl.qhimgs1.com\/a.jpg"},{"thumb":"ftp:\/\/bad.example\/d.jpg"}]}';
+$so360Parsed = App\Services\ImageSearchService::parse360ImageUrls($so360Json, 20);
+test('image_search parses 360 json urls', $so360Parsed === ['https://p0.ssl.qhimgs1.com/a.jpg', 'https://p0.ssl.qhimgs1.com/b.jpg', 'http://p0.so.qhimg.com/c.jpg'], json_encode($so360Parsed));
+test('image_search 360 drops non-http urls', strpos(implode(' ', $so360Parsed), 'ftp://') === false, implode(' ', $so360Parsed));
+
+// 端到端：Bing 全部失败 → 百度兜底
+$GLOBALS['__imageSearchFixtureHtml'] = $baiduJson;
+resetRequest();
+$_GET = ['q' => '钱包', 'limit' => 20, 'validate' => '0'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszBaiduJson = json_decode($out, true);
+test('image_search falls back to baidu when bing empty', ($iszBaiduJson['engine'] ?? '') === 'baidu' && (int)($iszBaiduJson['count'] ?? 0) === 3, $out);
+test('image_search baidu source url exposed', strpos($iszBaiduJson['source'] ?? '', 'image.baidu.com/search/acjson') !== false, $out);
+
+// 端到端：百度也失败 → 360 兜底
+$GLOBALS['__imageSearchFixtureHtml'] = $so360Json;
+resetRequest();
+$_GET = ['q' => '钱包', 'limit' => 20, 'validate' => '0'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$isz360Json = json_decode($out, true);
+test('image_search falls back to so360 when baidu empty', ($isz360Json['engine'] ?? '') === 'so360' && (int)($isz360Json['count'] ?? 0) === 3, $out);
+test('image_search so360 source url exposed', strpos($isz360Json['source'] ?? '', 'image.so.com/j') !== false, $out);
+unset($GLOBALS['__imageSearchFixtureHtml']);
+
+// --- 代理优先 + 直连兜底：响应 via 字段标明实际网络路线 ---
+App\Services\ImageSearchService::setProxy('127.0.0.1:7890');
+$GLOBALS['__imageSearchFixtureHtml'] = $bingFixture;
+resetRequest();
+$_GET = ['q' => 'cat', 'limit' => 5, 'validate' => '0'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszViaProxy = json_decode($out, true);
+test('image_search uses proxy route when configured', ($iszViaProxy['via'] ?? '') === 'proxy' && ($iszViaProxy['engine'] ?? '') === 'bing', $out);
+
+App\Services\ImageSearchService::setProxy('');
+resetRequest();
+$_GET = ['q' => 'cat', 'limit' => 5, 'validate' => '0'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
+$iszViaDirect = json_decode($out, true);
+test('image_search uses direct route when proxy disabled', ($iszViaDirect['via'] ?? '') === 'direct' && ($iszViaDirect['engine'] ?? '') === 'bing', $out);
+unset($GLOBALS['__imageSearchFixtureHtml']);
+App\Services\ImageSearchService::setProxy(null);
+
 putenv('APP_API_CSRF_TOKENS=iszkey-1');
 App\Config::reset();
 App\Support\Security::reset();
@@ -3502,15 +3601,44 @@ putenv('APP_API_CSRF_TOKENS=');
 App\Config::reset();
 App\Support\Security::reset();
 
-// --- 代理支持 ---
+// --- 代理支持（自动检测本机环境变量，与 archive.php 一致） ---
+$proxyEnvNames = ['APP_IMAGE_SEARCH_PROXY', 'WAYBACK_PROXY', 'APP_WAYBACK_PROXY', 'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'];
+$proxyEnvBackup = [];
+foreach ($proxyEnvNames as $name) {
+    $proxyEnvBackup[$name] = getenv($name);
+    putenv($name);
+}
+App\Services\ImageSearchService::setProxy(null);
+
 App\Services\ImageSearchService::setProxy('127.0.0.1:7890');
 test('image_search setProxy overrides', App\Services\ImageSearchService::proxy() === '127.0.0.1:7890', App\Services\ImageSearchService::proxy());
 App\Services\ImageSearchService::setProxy(null);
+test('image_search proxy empty when no env', App\Services\ImageSearchService::proxy() === '', App\Services\ImageSearchService::proxy());
+
 putenv('APP_IMAGE_SEARCH_PROXY=10.0.0.2:8080');
-test('image_search proxy reads env', App\Services\ImageSearchService::proxy() === '10.0.0.2:8080', App\Services\ImageSearchService::proxy());
+test('image_search proxy reads dedicated env', App\Services\ImageSearchService::proxy() === '10.0.0.2:8080', App\Services\ImageSearchService::proxy());
 putenv('APP_IMAGE_SEARCH_PROXY');
+
+putenv('HTTPS_PROXY=http://127.0.0.1:7890');
+test('image_search proxy reads archive-style env', App\Services\ImageSearchService::proxy() === 'http://127.0.0.1:7890', App\Services\ImageSearchService::proxy());
+putenv('HTTPS_PROXY');
+
+putenv('WAYBACK_PROXY=socks5h://127.0.0.1:7890');
+putenv('HTTPS_PROXY=http://127.0.0.1:7891');
+test('image_search archive env priority', App\Services\ImageSearchService::proxy() === 'socks5h://127.0.0.1:7890', App\Services\ImageSearchService::proxy());
+putenv('WAYBACK_PROXY');
+putenv('HTTPS_PROXY');
+
+App\Services\ImageSearchService::setProxy('');
+test('image_search empty setProxy disables auto detection', App\Services\ImageSearchService::proxy() === '', App\Services\ImageSearchService::proxy());
 App\Services\ImageSearchService::setProxy(null);
-test('image_search proxy empty by default', App\Services\ImageSearchService::proxy() === '', App\Services\ImageSearchService::proxy());
+
+// 恢复本机环境变量，避免影响后续实网用例
+foreach ($proxyEnvBackup as $name => $value) {
+    if ($value !== false && $value !== '') {
+        putenv($name . '=' . $value);
+    }
+}
 
 // --- 可访问性 / 图片类型 / 版权过滤 ---
 test('image_search flags shutterstock as copyright restricted', App\Services\ImageSearchService::isCopyrightRestricted('https://www.shutterstock.com/image-photo/cat-123.jpg') === true, '');
@@ -3572,14 +3700,14 @@ $liveMeta = App\Services\ImageSearchService::searchWithMeta('cat', 20);
 $liveImages = $liveMeta['images'];
 if (count($liveImages) > 0) {
     test('image_search live returns real images via proxy', count($liveImages) > 0 && preg_match('#^https?://#', $liveImages[0]) === 1, json_encode(array_slice($liveImages, 0, 3)));
-    test('image_search live engine is google or bing', in_array($liveMeta['engine'], ['google', 'bing'], true), $liveMeta['engine']);
+    test('image_search live engine is google or bing', in_array($liveMeta['engine'], ['google', 'bing', 'baidu', 'so360'], true), $liveMeta['engine']);
     // 端到端实网（走接口）
     resetRequest();
     $_GET = ['q' => 'cat', 'limit' => 10];
     $_SERVER['REQUEST_METHOD'] = 'GET';
     $out = runApiEndpoint(dirname(__DIR__) . '/api/image_search.php');
     $liveJson = json_decode($out, true);
-    test('image_search live endpoint returns images', ($liveJson['ok'] ?? false) === true && (int)($liveJson['count'] ?? 0) > 0 && in_array($liveJson['engine'] ?? '', ['google', 'bing'], true), substr($out, 0, 300));
+    test('image_search live endpoint returns images', ($liveJson['ok'] ?? false) === true && (int)($liveJson['count'] ?? 0) > 0 && in_array($liveJson['engine'] ?? '', ['google', 'bing', 'baidu', 'so360'], true), substr($out, 0, 300));
     // 实网可访问性校验：HEAD/Range GET 探测，须返回可外链的图片地址
     $liveVal = App\Services\ImageSearchService::validate($liveImages, 10);
     test('image_search live validate finds accessible images', $liveVal['checked'] > 0 && count($liveVal['images']) > 0 && preg_match('#^https?://#', $liveVal['images'][0]) === 1, json_encode($liveVal));

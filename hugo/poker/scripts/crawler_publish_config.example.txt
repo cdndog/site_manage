@@ -1,0 +1,28 @@
+# 站点映射配置示例。复制为 crawler_publish_config.txt 后按实际公众号/站点修改。
+# 空行和 # 开头的行会被忽略；脚本默认读取当前目录的 crawler_publish_config.txt。
+#
+# 布局 A（mp_id 在前）：
+#   mp_id|git_name|site_dir|lang|geo|site_domain|pubdir[|series]
+#     mp_id       公众号 ID（文章详情里的 mp_id）
+#     git_name    站点目录/仓库名
+#     site_dir    站点部署目录（仅用于日志展示，可留空）
+#     lang        语言代码
+#     geo         国家/地区代码
+#     site_domain 站点域名（写入 pubdomain / topic post_domain）
+#     pubdir      发布目录，留空默认 article
+#     series      系列，留空默认取 git_name
+#
+# 布局 B（与旧脚本兼容，mp_id 追加在末尾）：
+#   domain|unused|lang|geo|git_name|pubdir|mp_id[|series]
+#   batch_rewrite_ops_upload.sh、topic_ops_upload.sh 和本脚本都可以直接读取。
+#
+# 两种布局可以混用；没有 mp_id 列的行无法匹配公众号文章，会被跳过。
+
+# 布局 A
+MP_WXS_3932950698|wepokerqq|/root/hugo/wepokerqq|zh|CN|wepokerqq.com|article
+
+# 布局 B（旧配置行末尾补一列 mp_id）
+# wepokerqq.com|unused|zh|CN|wepokerqq|article|MP_WXS_3932950698
+
+# 同一公众号可配置多个站点/语言，每篇文章会分别上传一次
+# MP_WXS_3932950698|wepokerqq_jp|/root/hugo/wepokerqq_jp|ja|JP|wepokerqq.jp|article|poker

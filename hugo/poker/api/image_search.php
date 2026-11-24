@@ -28,9 +28,9 @@ if (Config::apiCsrfTokens() !== [] && !Security::apiTokenValid() && !Security::h
     return;
 }
 
-// 搜索需发起最多两次外网抓取（Google + Bing 兜底），放宽 PHP 执行时限，
-// 防止受限网络下 file_get_contents/curl 挂满 timeout 触发 max_execution_time 致命错误。
-// 实际耗时由 ImageSearchService 内部的紧凑 curl 超时（TIMEOUT=10s/次）约束。
+// 搜索可能发起多次外网抓取（Google/Bing/百度/360，检测到代理时先走代理再直连兜底），
+// 放宽 PHP 执行时限，防止受限网络下 file_get_contents/curl 挂满 timeout 触发 max_execution_time 致命错误。
+// 实际耗时由 ImageSearchService 内部的整体预算（TOTAL_BUDGET=24s）约束。
 set_time_limit(0);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
@@ -41,10 +41,12 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 $keyword = '';
-if (isset($_GET['q']) && trim((string)$_GET['q']) !== '') {
-    $keyword = trim((string)$_GET['q']);
-} elseif (isset($_GET['keyword']) && trim((string)$_GET['keyword']) !== '') {
-    $keyword = trim((string)$_GET['keyword']);
+// 参数必须是字符串：数组形态（?q[]=x）会触发 Array to string conversion 警告，
+// 警告文本会混进 JSON 响应体导致调用方解析失败。
+if (isset($_GET['q']) && is_string($_GET['q']) && trim($_GET['q']) !== '') {
+    $keyword = trim($_GET['q']);
+} elseif (isset($_GET['keyword']) && is_string($_GET['keyword']) && trim($_GET['keyword']) !== '') {
+    $keyword = trim($_GET['keyword']);
 }
 if ($keyword === '') {
     http_response_code(400);
@@ -63,7 +65,7 @@ if (isset($_GET['limit']) && is_numeric($_GET['limit'])) {
 
 // 可访问性/图片类型/版权校验：默认开启，?validate=0 可跳过（只返回解析到的原始地址）
 $validate = true;
-if (isset($_GET['validate']) && in_array(trim((string)$_GET['validate']), ['0', 'false', 'no'], true)) {
+if (isset($_GET['validate']) && is_string($_GET['validate']) && in_array(trim($_GET['validate']), ['0', 'false', 'no'], true)) {
     $validate = false;
 }
 
@@ -72,22 +74,32 @@ try {
     $checked = count($result['images']);
     $images = $result['images'];
     if ($validate) {
-        $validated = ImageSearchService::validate($result['images'], $limit);
+        // 校验必须跟随搜索成功的网络路线：若代理失败已回退直连，继续用坏代理探测会把结果全部丢弃
+        $validated = ImageSearchService::validate($result['images'], $limit, $result['proxy'] ?? null);
         $checked = $validated['checked'];
         $images = $validated['images'];
     }
-    echo json_encode([
+    $payload = [
         'ok' => true,
         'keyword' => $keyword,
         'engine' => $result['engine'],
+        'via' => $result['via'] ?? 'direct',
         'validated' => $validate,
         'checked' => $checked,
         'count' => count($images),
         'images' => $images,
-        'source' => $result['engine'] === 'bing'
-            ? ImageSearchService::buildBingUrl($keyword)
-            : ImageSearchService::buildUrl($keyword),
-    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        'source' => ImageSearchService::buildSourceUrl($result['engine'], $keyword),
+    ];
+    $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        // 关键词/抓取结果含非法 UTF-8 时，不能静默输出空响应体（调用方会解析失败）
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+    if ($json === false) {
+        http_response_code(500);
+        $json = json_encode(['ok' => false, 'error' => 'response encoding failed']);
+    }
+    echo $json;
 } catch (\Throwable $e) {
     error_log('[api/image_search] search failed for ' . $keyword . ': ' . $e->getMessage());
     http_response_code(502);

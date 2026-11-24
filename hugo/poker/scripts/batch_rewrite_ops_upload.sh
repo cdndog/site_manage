@@ -29,7 +29,9 @@ Usage: $0 -f <topic_file> [options]
               today (default): only topics whose json update_date is today (UTC)
 
   -c <file>   Site config file, default: crawler_publish_config.txt
-              lines: domain|(unused)|lang|geo|git_name|pubdir
+              Accepted layouts:
+                domain|(unused)|lang|geo|git_name|pubdir[|mp_id[|series]]
+                mp_id|git_name|site_dir|lang|geo|site_domain|pubdir[|series]
               If the topic json has a non-empty "pubdir", it takes precedence;
               otherwise the pubdir from the config file is used.
   -b <url>    API base URL, default: https://wpk.cpanice.com/v2
@@ -161,8 +163,25 @@ while IFS= read -r config_line || [[ -n "$config_line" ]]; do
     config_line="${config_line%$'\r'}"
     [[ -z "$config_line" || "$config_line" == \#* ]] && continue
 
-    # crawler_publish_config.txt: domain|(unused)|lang|geo|git_name|pubdir
-    IFS='|' read -r domain _unused lang geo git_name pubdir _rest <<< "$config_line"
+    # 支持两种列顺序，便于与 batch_crawler_weixin_article_upload.sh 共用配置：
+    #   1) domain|(unused)|lang|geo|git_name|pubdir[|mp_id[|series]]
+    #   2) mp_id|git_name|site_dir|lang|geo|site_domain|pubdir[|series]
+    # 旧配置末尾补一列 mp_id 后，两种脚本都可以直接使用。
+    IFS='|' read -r f1 f2 f3 f4 f5 f6 f7 _rest <<< "$config_line"
+
+    if [[ "$f1" == MP_* ]]; then
+        git_name="$f2"
+        lang="$f4"
+        geo="$f5"
+        domain="$f6"
+        pubdir="$f7"
+    else
+        domain="$f1"
+        lang="$f3"
+        geo="$f4"
+        git_name="$f5"
+        pubdir="$f6"
+    fi
     pubdir="${pubdir:-article}"
 
     if [[ -z "$git_name" ]]; then
@@ -286,10 +305,10 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     fi
 
     for ((site_index = 0; site_index < ${#CONFIG_GITS[@]}; site_index++)); do
-        domain="${CONFIG_DOMAINS[$site_index]}"
+        git_name="${CONFIG_GITS[$site_index]}"
         lang="${CONFIG_LANGS[$site_index]}"
         geo="${CONFIG_GEOS[$site_index]}"
-        git_name="${CONFIG_GITS[$site_index]}"
+        domain="${CONFIG_DOMAINS[$site_index]}"
         config_pubdir="${CONFIG_PUBDIRS[$site_index]}"
         # topic json 的 pubdir 优先，没有时使用站点配置的 pubdir
         pubdir="${json_pubdir:-$config_pubdir}"
@@ -309,7 +328,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
             continue
         fi
 
-        echo "Uploading $topic_id ($topic_url) keyword=$keyword site=$git_name/$pubdir"
+        echo "Uploading $topic_id ($topic_url) keyword=$keyword site=$git_name pubdir=$pubdir"
         if upload_topic "$domain" "$lang" "$geo" "$git_name" "$pubdir" "$keyword" "$ctx_id" "$topic_json"; then
             mark_uploaded "$upload_key"
             UPLOAD_COUNT=$((UPLOAD_COUNT + 1))
